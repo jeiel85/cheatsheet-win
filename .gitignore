@@ -1,0 +1,18 @@
+# Build output
+bin/
+obj/
+dist/
+*.user
+*.suo
+.vs/
+*_wpftmp.csproj
+*.log
+
+# Pages build output (assembled by CI)
+_site/
+
+# Rust build output
+target/
+
+# Local tooling
+.claude/

@@ -1,0 +1,29 @@
+name: 모델 추가 요청 / Model request
+description: 내 노트북의 Fn 키 정보를 추가해 주세요 / Add Fn key data for my laptop
+title: "Add model: "
+labels: [model-request]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        앱의 **설정 → 기기 → 이 모델 추가 요청** 버튼을 쓰면 아래 칸이 자동으로 채워져요.
+        The **Settings → Device → Request this model** button fills this in for you.
+        일련번호(Serial)나 UUID는 적지 마세요. / Please do not include serial numbers or UUIDs.
+  - type: textarea
+    id: device
+    attributes:
+      label: 기기 정보 / Device info
+      description: "PowerShell: Get-ItemProperty 'HKLM:\HARDWARE\DESCRIPTION\System\BIOS' | Select SystemManufacturer,SystemProductName,SystemFamily,SystemVersion,BaseBoardProduct"
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: manual
+    attributes:
+      label: 공식 사용 설명서 링크 / Official user manual link
+      description: ASUS E-Manual 또는 Lenovo User Guide PDF (있으면) / if you have it
+  - type: textarea
+    id: notes
+    attributes:
+      label: 메모 / Notes
+      description: 키보드 윗줄 사진이나 다른 점 / A photo of the top row, anything unusual

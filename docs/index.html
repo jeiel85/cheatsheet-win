@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="ko" data-lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fn Cheatsheet — 노트북 Fn 키, 길게 누르면 보여요</title>
+<meta name="description" content="ASUS·Lenovo 노트북의 Fn 키 기능을 화면에 띄워 주는 Windows 앱. 모델을 자동으로 확인하고, 모르면 추측하지 않습니다. Hold a key to see what your laptop's Fn keys do.">
+<meta property="og:title" content="Fn Cheatsheet — Fn keys at a glance on Windows laptops">
+<meta property="og:description" content="Hold Left Ctrl to see what your ASUS or Lenovo laptop's Fn keys do. Detects your model; never guesses.">
+<meta property="og:image" content="https://jeiel85.github.io/cheatsheet-win/assets/overlay-en.png">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/png" href="assets/favicon-64.png">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+:root{
+  --bg:#0c0e13; --bg2:#12151c; --card:#161a22; --line:#262b36; --text:#eef0f4; --sub:#9aa1ae; --muted:#6e7583;
+  --accent:#4cc2ff; --accent2:#0078d4; --good:#3ddc97; --warn:#ffc857; --cap:#1d2129; --capline:#323846;
+  --radius:16px; --maxw:1120px;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --bg:#f6f7f9; --bg2:#ffffff; --card:#ffffff; --line:#e1e4ea; --text:#15171c; --sub:#4f5562; --muted:#7a8090;
+    --accent:#0067c0; --accent2:#0067c0; --good:#0f7b45; --warn:#9a5b00; --cap:#f3f5f8; --capline:#d3d8e0;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:"Pretendard Variable",Pretendard,-apple-system,"Segoe UI","Malgun Gothic",sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+html[data-lang="ko"] [lang="en"]:not(html), html[data-lang="en"] [lang="ko"]:not(html){display:none!important}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 20px}
+header.top{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+header.top .wrap{display:flex;align-items:center;gap:16px;height:60px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;color:var(--text)}
+.brand img{width:28px;height:28px}
+nav{margin-left:auto;display:flex;gap:18px;align-items:center;font-size:14px}
+nav a{color:var(--sub)} nav a:hover{color:var(--text);text-decoration:none}
+.lang{border:1px solid var(--line);background:transparent;color:var(--text);border-radius:999px;padding:4px 12px;font:inherit;font-size:13px;cursor:pointer}
+.brand,nav a{white-space:nowrap}
+@media (max-width:720px){ nav a.hide-sm{display:none} nav{gap:12px} }
+@media (max-width:420px){ .brand span{display:none} }
+
+.hero{padding:72px 0 40px;text-align:center;background:radial-gradient(1000px 420px at 50% -60px,color-mix(in srgb,var(--accent) 22%,transparent),transparent 70%)}
+.eyebrow{display:inline-flex;gap:8px;align-items:center;font-size:13px;color:var(--sub);border:1px solid var(--line);border-radius:999px;padding:4px 12px;background:var(--bg2)}
+h1{font-size:clamp(32px,5.4vw,58px);line-height:1.15;margin:18px 0 14px;letter-spacing:-.02em}
+h1 .k{display:inline-block;padding:0 .28em;border-radius:.18em;background:var(--accent2);color:#fff;box-shadow:0 .08em 0 color-mix(in srgb,var(--accent2) 55%,#000)}
+.lead{font-size:clamp(16px,2vw,19px);color:var(--sub);max-width:720px;margin:0 auto}
+.cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:28px 0 10px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:12px 20px;border-radius:12px;font-weight:600;border:1px solid var(--line);color:var(--text);background:var(--bg2)}
+.btn.primary{background:var(--accent2);border-color:var(--accent2);color:#fff}
+.btn:hover{text-decoration:none;filter:brightness(1.08)}
+.small{font-size:13px;color:var(--muted)}
+.shot{margin:38px auto 0;max-width:1000px}
+.shot img{width:100%;height:auto;display:block;filter:drop-shadow(0 20px 40px rgba(0,0,0,.35))}
+
+section{padding:64px 0;border-top:1px solid var(--line)}
+h2{font-size:clamp(24px,3.4vw,34px);margin:0 0 10px;letter-spacing:-.01em}
+.sec-lead{color:var(--sub);margin:0 0 30px;max-width:760px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+@media (max-width:860px){.grid3{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:22px}
+.card h3{margin:6px 0 6px;font-size:18px}
+.card p{margin:0;color:var(--sub);font-size:15px}
+.num{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:9px;background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent);font-weight:700}
+.kbd{display:inline-block;min-width:1.8em;text-align:center;padding:1px 7px;border:1px solid var(--capline);border-bottom-width:2px;border-radius:6px;background:var(--cap);font-size:.86em;font-weight:600;color:var(--text);white-space:nowrap}
+
+.why{display:grid;grid-template-columns:1.1fr .9fr;gap:24px;align-items:start}
+@media (max-width:860px){.why{grid-template-columns:1fr}}
+.why ul{margin:0;padding-left:20px;color:var(--sub)} .why li{margin:6px 0}
+
+/* models */
+.tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px}
+.search{flex:1 1 320px;min-width:0;display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:0 12px}
+.search input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--text);font:inherit;padding:11px 0}
+.chip{border:1px solid var(--line);background:var(--bg2);color:var(--sub);border-radius:999px;padding:7px 14px;font:inherit;font-size:14px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--accent2);border-color:var(--accent2);color:#fff}
+.count{color:var(--muted);font-size:14px;margin-left:auto}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 18px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 14px;font-size:14px;color:var(--sub)} .stat b{color:var(--text);font-size:18px;margin-right:4px}
+.models{display:grid;gap:10px}
+details.model{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+details.model[open]{border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+details.model summary{list-style:none;cursor:pointer;padding:14px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+details.model summary::-webkit-details-marker{display:none}
+.vendor{font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px;background:var(--cap);border:1px solid var(--capline);color:var(--sub)}
+.mname{font-weight:600;flex:1 1 280px;min-width:0}
+.years{color:var(--muted);font-size:13px}
+.badge{font-size:12px;padding:3px 8px;border-radius:999px;border:1px solid}
+.badge.ok{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent)}
+.badge.part{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
+.chev{color:var(--muted);transition:transform .2s} details[open] .chev{transform:rotate(90deg)}
+.mbody{padding:4px 16px 18px;border-top:1px solid var(--line)}
+.label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:14px 0 8px}
+.caps{display:flex;flex-wrap:wrap;gap:6px}
+.cap{width:86px;min-height:84px;border:1px solid var(--capline);border-bottom-width:3px;border-radius:9px;background:var(--cap);padding:6px 7px;display:flex;flex-direction:column;gap:2px}
+.cap .k{font-size:11px;font-weight:700;color:var(--sub)}
+.cap .i{font-size:18px;text-align:center;line-height:1.2}
+.cap .t{font-size:11.5px;text-align:center;line-height:1.25;color:var(--text)}
+.combos{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:6px 14px}
+.combo{display:flex;align-items:center;gap:6px;font-size:14px}
+.combo .t{color:var(--text)}
+.notes{color:var(--sub);font-size:13.5px;margin:10px 0 0;padding-left:18px}
+.codes{font-family:ui-monospace,Consolas,monospace;font-size:12.5px;color:var(--sub);word-break:break-word}
+.srcs{margin:0;padding-left:18px;font-size:13.5px}
+.empty{padding:30px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:14px}
+
+.checker textarea{width:100%;min-height:120px;background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:12px;font-family:ui-monospace,Consolas,monospace;font-size:13px;resize:vertical}
+pre.cmd{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;overflow-x:auto;font-size:13px;margin:8px 0 12px}
+.result{margin-top:12px;padding:14px 16px;border-radius:12px;border:1px solid var(--line);background:var(--card)}
+.result.ok{border-color:color-mix(in srgb,var(--good) 50%,var(--line))}
+.result.warn{border-color:color-mix(in srgb,var(--warn) 50%,var(--line))}
+
+.faq details{border-bottom:1px solid var(--line);padding:14px 0}
+.faq summary{cursor:pointer;font-weight:600}
+.faq p{color:var(--sub);margin:8px 0 0}
+footer{padding:40px 0 60px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
+footer .wrap{display:flex;gap:18px;flex-wrap:wrap;justify-content:space-between}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#"><img src="assets/favicon-64.png" alt=""><span>Fn Cheatsheet</span></a>
+    <nav>
+      <a class="hide-sm" href="#how"><span lang="ko">사용법</span><span lang="en">How it works</span></a>
+      <a href="#models"><span lang="ko">지원 모델</span><span lang="en">Laptops</span></a>
+      <a class="hide-sm" href="#faq">FAQ</a>
+      <a href="https://github.com/jeiel85/cheatsheet-win">GitHub</a>
+      <button class="lang" id="langBtn" type="button">English</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero" style="border-top:0">
+  <div class="wrap">
+    <span class="eyebrow">Windows 10 · 11 &nbsp;·&nbsp; ASUS · Lenovo</span>
+    <h1 lang="ko"><span class="k">Fn</span> 키, 이제 외우지 마세요</h1>
+    <h1 lang="en">Stop guessing your <span class="k">Fn</span> keys</h1>
+    <p class="lead" lang="ko">왼쪽 <span class="kbd">Ctrl</span>을 길게 누르면 <b>내 노트북 모델</b>의 Fn 키 기능이 화면에 떠요. 손을 떼면 사라져요. 맥의 CheatSheet처럼요.</p>
+    <p class="lead" lang="en">Hold <span class="kbd">Left Ctrl</span> and the Fn-key functions of <b>your exact laptop model</b> appear on screen. Let go and they're gone — like CheatSheet on the Mac.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/jeiel85/cheatsheet-win/releases/latest/download/FnCheatsheet.exe">⬇ <span lang="ko">다운로드 (.exe)</span><span lang="en">Download (.exe)</span></a>
+      <a class="btn" href="#models">🔎 <span lang="ko">내 노트북 지원 확인</span><span lang="en">Is my laptop supported?</span></a>
+    </div>
+    <p class="small" lang="ko">설치 없이 exe 하나(약 2 MB) · 관리자 권한 불필요 · 자동 업데이트 · 무료 오픈소스(MIT)</p>
+    <p class="small" lang="en">One ~2 MB exe, no installer · no admin rights · auto-updates · free and open source (MIT)</p>
+    <div class="shot">
+      <img lang="ko" src="assets/overlay-ko.png" width="2072" height="881" alt="ASUS ExpertBook P1에서 왼쪽 Ctrl을 길게 눌렀을 때 뜨는 Fn 키 안내 화면">
+      <img lang="en" src="assets/overlay-en.png" width="2072" height="879" alt="The Fn key overlay shown while holding Left Ctrl on an ASUS ExpertBook P1">
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2 lang="ko">이렇게 동작해요</h2><h2 lang="en">How it works</h2>
+    <p class="sec-lead" lang="ko">제조사 설명서에서 확인한 키 정보만 보여 주고, 모르는 모델은 추측하지 않아요.</p>
+    <p class="sec-lead" lang="en">It only shows key maps taken from the maker's own manuals — and it never guesses an unknown model.</p>
+    <div class="grid3">
+      <div class="card"><span class="num">1</span>
+        <h3 lang="ko">모델 자동 확인</h3><h3 lang="en">Detects your model</h3>
+        <p lang="ko">Windows에 기록된 제조사·모델 코드(예: <code>P1503CVA</code>, Lenovo 머신 타입 <code>21HM</code>)로 맞는 키보드 프로필을 찾아요.</p>
+        <p lang="en">It reads the maker and model code Windows already knows (e.g. <code>P1503CVA</code>, or a Lenovo machine type like <code>21HM</code>) and finds the matching keyboard profile.</p>
+      </div>
+      <div class="card"><span class="num">2</span>
+        <h3 lang="ko">길게 누르면 표시</h3><h3 lang="en">Hold to show</h3>
+        <p lang="ko"><span class="kbd">Ctrl</span>만 0.9초 누르고 있으면 떠요. 다른 키를 같이 누르거나 클릭하면 뜨지 않으니 <span class="kbd">Ctrl</span>+<span class="kbd">C</span>는 그대로예요.</p>
+        <p lang="en">Hold <span class="kbd">Ctrl</span> alone for 0.9 s. Press another key or click and it stays hidden, so <span class="kbd">Ctrl</span>+<span class="kbd">C</span> works as always.</p>
+      </div>
+      <div class="card"><span class="num">3</span>
+        <h3 lang="ko">모르면 묻기</h3><h3 lang="en">Asks instead of guessing</h3>
+        <p lang="ko">목록에 없거나 후보가 여럿이면 엉뚱한 표를 띄우지 않고, 설정에서 직접 고르게 해요. 내 프로필 파일도 추가할 수 있어요.</p>
+        <p lang="en">If your model isn't listed, or several match, it won't show a wrong map — you pick it once in Settings. You can add your own profile files too.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <div class="wrap why">
+    <div>
+      <h2 lang="ko">왜 Fn이 아니라 Ctrl인가요?</h2><h2 lang="en">Why Ctrl and not Fn itself?</h2>
+      <p class="sec-lead" lang="ko">ASUS·Lenovo 노트북 대부분은 Fn 키를 키보드 컨트롤러(EC) 안에서 처리해요. Fn을 혼자 누르면 Windows에 <b>아무 신호도 오지 않아서</b>, 어떤 앱도 Fn을 누르고 있는지 알 수 없어요.</p>
+      <p class="sec-lead" lang="en">On almost every ASUS and Lenovo laptop the Fn key is handled inside the keyboard controller (EC). Pressed alone it sends <b>nothing to Windows</b>, so no app can tell it's being held.</p>
+      <ul lang="ko">
+        <li>그래서 기본값은 Fn 바로 옆의 <b>왼쪽 Ctrl 길게 누르기</b>예요.</li>
+        <li>ThinkPad는 BIOS·Vantage에서 <b>Fn↔Ctrl 위치 바꾸기</b>가 가능해요.</li>
+        <li>Fn이 신호를 보내는 모델이라면 설정의 <b>직접 등록</b>으로 Fn 자체를 트리거로 쓸 수 있어요.</li>
+        <li>트레이 아이콘을 클릭해도 언제든 볼 수 있어요.</li>
+      </ul>
+      <ul lang="en">
+        <li>So the default trigger is <b>holding Left Ctrl</b>, right next to Fn.</li>
+        <li>ThinkPads can <b>swap Fn and Ctrl</b> in BIOS / Lenovo Vantage.</li>
+        <li>If your Fn key does send a signal, <b>capture it</b> in Settings and use Fn itself.</li>
+        <li>Clicking the tray icon shows the sheet any time.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 lang="ko">개인정보·보안</h3><h3 lang="en">Privacy &amp; security</h3>
+      <p lang="ko">Rust + Win32로 만든 네이티브 앱이라 트레이에 있어도 메모리를 몇 MB만 써요. 관리자 권한 없이 동작하고, 네트워크는 하루 한 번 GitHub 업데이트 확인에만 써요. 키보드 후킹은 트리거 키를 혼자 누르고 있는지만 보고 입력 내용은 저장하지 않아요. 기기 정보는 모델 문자열만 읽어요(일련번호 X).</p>
+      <p lang="en">A native Rust + Win32 app that uses only a few MB of memory in the tray. No admin rights; the network is used only for a once-a-day GitHub update check. The keyboard hook only checks whether the trigger key is held alone and never stores what you type. Only model strings are read — never serial numbers.</p>
+      <p style="margin-top:10px"><a href="https://github.com/jeiel85/cheatsheet-win/blob/main/SECURITY.md">SECURITY.md →</a></p>
+    </div>
+  </div>
+</section>
+
+<section id="models">
+  <div class="wrap">
+    <h2 lang="ko">지원 노트북 목록</h2><h2 lang="en">Supported laptops</h2>
+    <p class="sec-lead" lang="ko">지금 앱에 들어 있는 프로필 전체예요. 모델을 펼치면 키 배치와 근거가 된 공식 설명서 링크를 볼 수 있어요.</p>
+    <p class="sec-lead" lang="en">Every profile the app ships with. Open a model to see its key map and the official manual it comes from.</p>
+    <div class="stats" id="stats"></div>
+    <div class="tools">
+      <label class="search">🔎<input id="q" type="search" autocomplete="off" placeholder="모델명·모델 코드·머신 타입 (예: P1503, T14 Gen 4, 21HM)"></label>
+      <button class="chip" data-vendor="" aria-pressed="true"><span lang="ko">전체</span><span lang="en">All</span></button>
+      <button class="chip" data-vendor="ASUS" aria-pressed="false">ASUS</button>
+      <button class="chip" data-vendor="Lenovo" aria-pressed="false">Lenovo</button>
+      <span class="count" id="count"></span>
+    </div>
+    <div class="models" id="list"><div class="empty">…</div></div>
+
+    <div class="card checker" style="margin-top:28px">
+      <h3 lang="ko">내 노트북이 자동으로 인식될까요?</h3><h3 lang="en">Will my laptop be detected automatically?</h3>
+      <p lang="ko">PowerShell에서 아래 명령을 실행하고 결과를 붙여 넣으세요. 앱과 같은 규칙으로 확인해요. (붙여 넣은 내용은 이 페이지 밖으로 나가지 않아요.)</p>
+      <p lang="en">Run this in PowerShell and paste the output. It's checked with the same rules the app uses. (Nothing you paste leaves this page.)</p>
+      <pre class="cmd">Get-ItemProperty 'HKLM:\HARDWARE\DESCRIPTION\System\BIOS' | Select SystemManufacturer,SystemProductName,SystemFamily,SystemVersion,BaseBoardProduct | Format-List</pre>
+      <textarea id="paste" spellcheck="false" placeholder="SystemManufacturer : ASUSTeK COMPUTER INC.&#10;SystemProductName  : ASUS EXPERTBOOK P1503CVA&#10;…"></textarea>
+      <div id="checkResult"></div>
+    </div>
+  </div>
+</section>
+
+<section id="faq" class="faq">
+  <div class="wrap">
+    <h2>FAQ</h2>
+    <details><summary lang="ko">내 모델이 목록에 없어요.</summary><summary lang="en">My model isn't listed.</summary>
+      <p lang="ko">앱의 설정 → 기기에서 키보드가 같은 모델을 고르면 바로 쓸 수 있어요. 같은 버튼 옆의 <b>이 모델 추가 요청</b>을 누르면 모델 정보가 채워진 GitHub 이슈가 열려요. 공식 설명서 링크를 함께 주시면 더 빨라요.</p>
+      <p lang="en">Pick a model with the same keyboard in Settings → Device and it works right away. <b>Request this model</b> opens a GitHub issue with your model info filled in — a link to the official manual speeds things up.</p></details>
+    <details><summary lang="ko">표시된 키가 실제와 달라요.</summary><summary lang="en">A key on the sheet is wrong.</summary>
+      <p lang="ko">같은 시리즈라도 연식·SKU마다 다를 수 있어요. 모델 정보와 함께 이슈로 알려 주세요. 각 프로필에는 근거가 된 설명서 링크가 붙어 있어요.</p>
+      <p lang="en">Even within a series, keys can differ by year or SKU. Please open an issue with your model info — every profile links the manual it's based on.</p></details>
+    <details><summary lang="ko">Fn 잠금(Fn Lock)은 어떻게 되나요?</summary><summary lang="en">What about Fn Lock?</summary>
+      <p lang="ko">윗줄(F1–F12)은 Fn 잠금 상태에 따라 Fn 없이 또는 Fn과 함께 동작해요. 화면 아래에 모델별 잠금 키(보통 <span class="kbd">Fn</span>+<span class="kbd">Esc</span>)와 기본값을 적어 두었어요.</p>
+      <p lang="en">The top row works with or without Fn depending on Fn Lock. The bottom of the sheet shows your model's lock combo (usually <span class="kbd">Fn</span>+<span class="kbd">Esc</span>) and its default.</p></details>
+    <details><summary lang="ko">어떤 창에서는 안 떠요.</summary><summary lang="en">It doesn't show over some windows.</summary>
+      <p lang="ko">작업 관리자처럼 관리자 권한으로 실행된 창이 앞에 있으면 Windows가 일반 앱에 키 입력을 알려 주지 않아요. 보안을 위해 이 앱은 관리자 권한으로 실행하지 않으니, 그럴 땐 트레이 아이콘을 클릭하세요.</p>
+      <p lang="en">When an elevated window (e.g. Task Manager) has focus, Windows doesn't pass key events to normal apps. Fn Cheatsheet deliberately never runs elevated — click the tray icon instead.</p></details>
+    <details><summary lang="ko">SmartScreen 경고가 떠요.</summary><summary lang="en">Windows SmartScreen warns about the file.</summary>
+      <p lang="ko">코드 서명을 하지 않은 새 앱이라 그래요. <b>추가 정보 → 실행</b>을 누르면 돼요. 릴리스마다 SHA-256 체크섬 파일을 함께 올려 두었어요.</p>
+      <p lang="en">It's a new, unsigned app. Choose <b>More info → Run anyway</b>. Every release ships with a SHA-256 checksum file.</p></details>
+    <details><summary lang="ko">Dell·HP·삼성·LG도 되나요?</summary><summary lang="en">Dell, HP, Samsung, LG?</summary>
+      <p lang="ko">지금은 ASUS와 Lenovo만 넣었어요. 데이터 형식은 제조사와 무관하니, 공식 설명서를 근거로 한 기여를 환영해요.</p>
+      <p lang="en">Only ASUS and Lenovo for now. The data format is vendor-neutral — contributions backed by official manuals are welcome.</p></details>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 jeiel85 · MIT · <span lang="ko">ASUS·Lenovo와 관계없는 비공식 프로젝트예요.</span><span lang="en">Not affiliated with ASUS or Lenovo.</span></span>
+    <span><a href="https://github.com/jeiel85/cheatsheet-win">GitHub</a> · <a href="https://github.com/jeiel85/cheatsheet-win/releases">Releases</a> · <a href="https://github.com/jeiel85/cheatsheet-win/issues">Issues</a></span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var ICON = {"mute":"🔇","vol-down":"🔉","vol-up":"🔊","mic-mute":"🎙️","bright-down":"🔅","bright-up":"🔆","kbd-light":"⌨️","display":"🖥️","touchpad":"🖱️","airplane":"✈️","camera":"📷","lock":"🔒","sleep":"🌙","screenshot":"✂️","calculator":"🧮","settings":"⚙️","search":"🔍","app":"🗔","fan":"🌀","performance":"⚡","refresh-rate":"🔄","fnlock":"🔐","call":"📞","call-end":"📵","favorites":"⭐","emoji":"😊","copilot":"✨","ai":"✨","play-pause":"⏯️","prev":"⏮️","next":"⏭️","stop":"⏹️","home":"⇱","end":"⇲","pgup":"⇞","pgdn":"⇟","insert":"⎀","prtsc":"⎙","scrlk":"⇳","pause":"⏸️","break":"⏸️","sysrq":"⎙","numlock":"🔢","rotate":"🔃","battery":"🔋","wifi":"📶","privacy":"🛡️","power":"⏻","info":"ℹ️","other":"•"};
+  var TOP = ["Esc","F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12"];
+  var root = document.documentElement, profiles = [], vendor = "", dataVersion = "";
+
+  // ── language ──
+  function lang(){ return root.getAttribute("data-lang"); }
+  function T(en, ko){ return lang() === "ko" ? (ko || en || "") : (en || ko || ""); }
+  function setLang(l){
+    root.setAttribute("data-lang", l); root.setAttribute("lang", l);
+    document.getElementById("langBtn").textContent = l === "ko" ? "English" : "한국어";
+    document.getElementById("q").placeholder = T("Model, model code or machine type (e.g. P1503, T14 Gen 4, 21HM)", "모델명·모델 코드·머신 타입 (예: P1503, T14 Gen 4, 21HM)");
+    try { localStorage.setItem("lang", l); } catch(e){}
+    render(); check();
+  }
+  document.getElementById("langBtn").addEventListener("click", function(){ setLang(lang() === "ko" ? "en" : "ko"); });
+
+  // ── helpers ──
+  function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }); }
+  function safeUrl(u){ return /^https:\/\//i.test(u || "") ? u : "#"; }
+  function rx(p){ try { return new RegExp(p, "i"); } catch(e){ return null; } }
+
+  // Same rules as Core/Matcher.cs: machine type 100, model code 90, family/version 80; manufacturer required.
+  function score(dev, p){
+    var m = p.match || {};
+    if (!(m.manufacturer || []).some(function(r){ var x = rx(r); return x && x.test(dev.manufacturer || ""); })) return null;
+    var prod = dev.product || "", best = 0, why = "";
+    if (prod.length >= 4 && (m.mtm || []).some(function(t){ return t.toUpperCase() === prod.substr(0,4).toUpperCase(); })) { best = 100; why = T("machine type ", "머신 타입 ") + prod.substr(0,4).toUpperCase(); }
+    if (best < 90) (m.product || []).some(function(f){
+      var x = rx("(?<![A-Za-z0-9])(?:" + f + ")"); if (!x) return false;
+      var w = x.test(dev.baseboard || "") ? dev.baseboard : x.test(prod) ? prod : null;
+      if (w) { best = 90; why = T("model code in ", "모델 코드 ") + "\"" + w + "\""; return true; } return false;
+    });
+    if (best < 80) (m.family || []).some(function(f){
+      var x = rx(f); if (!x) return false;
+      var w = x.test(dev.version || "") ? dev.version : x.test(dev.family || "") ? dev.family : null;
+      if (w) { best = 80; why = T("model name ", "모델명 ") + "\"" + w + "\""; return true; } return false;
+    });
+    return best ? { p: p, score: best, why: why } : null;
+  }
+
+  function searchText(p){
+    var m = p.match || {};
+    return [p.vendor, p.series, p.name, p.years].concat(m.product || [], m.mtm || [], m.family || []).join(" ").toLowerCase();
+  }
+
+  function matchesQuery(p, q){
+    if (!q) return true;
+    var words = q.toLowerCase().split(/\s+/).filter(Boolean), hay = searchText(p);
+    if (words.every(function(w){ return hay.indexOf(w) >= 0; })) return true;
+    // also try the query as an SMBIOS string ("ThinkPad T14 Gen 4", "21HMCTO1WW", "P1503CVA")
+    var dev = { manufacturer: p.vendor === "ASUS" ? "ASUSTeK COMPUTER INC." : "LENOVO", product: q, baseboard: q, version: q, family: q };
+    return !!score(dev, p);
+  }
+
+  function keyCaps(keys){
+    keys = keys.slice().sort(function(a,b){ var i = TOP.indexOf(a.key), j = TOP.indexOf(b.key); return (i<0?99:i) - (j<0?99:j); });
+    return '<div class="caps">' + keys.map(function(k){
+      var note = T(k.note_en, k.note_ko);
+      return '<div class="cap"' + (note ? ' title="' + esc(note) + '"' : '') + '><span class="k">' + esc(k.key) + (note ? " *" : "") + '</span><span class="i">' + (ICON[k.icon] || "") + '</span><span class="t">' + esc(T(k.en, k.ko)) + '</span></div>';
+    }).join("") + '</div>';
+  }
+
+  function comboList(keys){
+    return '<div class="combos">' + keys.map(function(k){
+      var note = T(k.note_en, k.note_ko);
+      return '<div class="combo"' + (note ? ' title="' + esc(note) + '"' : '') + '><span class="kbd">Fn</span>+<span class="kbd">' + esc(k.key) + '</span><span>' + (ICON[k.icon] || "") + '</span><span class="t">' + esc(T(k.en, k.ko)) + (note ? " *" : "") + '</span></div>';
+    }).join("") + '</div>';
+  }
+
+  function card(p){
+    var keys = p.keys || [], top = keys.filter(function(k){ return k.row === "top"; }), combo = keys.filter(function(k){ return k.row !== "top"; });
+    var ok = p.verified !== "partial";
+    var notes = keys.filter(function(k){ return T(k.note_en, k.note_ko); }).map(function(k){ return '<li><b>' + esc((k.row === "top" ? "" : "Fn+") + k.key) + '</b> — ' + esc(T(k.note_en, k.note_ko)) + '</li>'; });
+    if (T(p.notes_en, p.notes_ko)) notes.push('<li>' + esc(T(p.notes_en, p.notes_ko)) + '</li>');
+    var m = p.match || {}, pretty = function(r){ return String(r).replace(/\\b|\^|\$/g, "").replace(/\(\?:/g, "(").replace(/\\s[+*]?/g, " ").replace(/\\/g, ""); }, codes = [].concat((m.product || []).map(pretty), (m.mtm || []).map(function(x){ return "MT " + x; }), (m.family || []).map(pretty));
+    var fl = p.fnLock || {};
+    return '<details class="model" id="m-' + esc(p.id) + '"><summary>' +
+      '<span class="vendor">' + esc(p.vendor) + '</span><span class="mname">' + esc(p.name) + '</span>' +
+      (p.years ? '<span class="years">' + esc(p.years) + '</span>' : '') +
+      '<span class="badge ' + (ok ? 'ok">' + T("Official manual", "공식 설명서 확인") : 'part">' + T("Partly verified", "일부 확인")) + '</span><span class="chev">▶</span></summary>' +
+      '<div class="mbody">' +
+      (top.length ? '<div class="label">' + T("Top row", "윗줄 키") + '</div>' + keyCaps(top) : '') +
+      (combo.length ? '<div class="label">' + T("Hold Fn and press", "Fn을 누른 채로") + '</div>' + comboList(combo) : '') +
+      (fl.combo ? '<div class="label">' + T("Fn Lock", "Fn 잠금") + '</div><div><span class="kbd">' + esc(fl.combo).replace(/\+/g, '</span>+<span class="kbd">') + '</span> &nbsp;' + esc(T(fl.default_en, fl.default_ko)) + '</div>' : '') +
+      (notes.length ? '<ul class="notes">' + notes.join("") + '</ul>' : '') +
+      '<div class="label">' + T("Detected by", "자동 인식 기준") + '</div><div class="codes">' + esc(codes.join(" · ")) + '</div>' +
+      '<div class="label">' + T("Sources", "출처") + '</div><ul class="srcs">' + (p.sources || []).map(function(s){
+        return '<li><a href="' + esc(safeUrl(s.url)) + '" target="_blank" rel="noopener noreferrer">' + esc(s.title || s.url) + '</a>' + (s.kind === "community" ? ' <span class="small">(' + T("community", "커뮤니티") + ')</span>' : '') + '</li>';
+      }).join("") + '</ul></div></details>';
+  }
+
+  function render(){
+    var list = document.getElementById("list");
+    if (!profiles.length) return;
+    var q = document.getElementById("q").value.trim();
+    var shown = profiles.filter(function(p){ return (!vendor || p.vendor === vendor) && matchesQuery(p, q); });
+    list.innerHTML = shown.length ? shown.map(card).join("") : '<div class="empty">' + T("No matching model. Request it on GitHub — see the FAQ below.", "맞는 모델이 없어요. 아래 FAQ를 보고 GitHub로 요청해 주세요.") + '</div>';
+    document.getElementById("count").textContent = T(shown.length + " of " + profiles.length, profiles.length + "개 중 " + shown.length + "개");
+    var by = function(v){ return profiles.filter(function(p){ return p.vendor === v; }).length; };
+    var models = profiles.reduce(function(n, p){ var m = p.match || {}; return n + (m.product || []).length + (m.mtm || []).length; }, 0);
+    document.getElementById("stats").innerHTML =
+      '<span class="stat"><b>' + profiles.length + '</b>' + T("profiles", "개 프로필") + '</span>' +
+      '<span class="stat"><b>' + by("ASUS") + '</b>ASUS</span><span class="stat"><b>' + by("Lenovo") + '</b>Lenovo</span>' +
+      '<span class="stat"><b>' + models + '</b>' + T("model codes / machine types", "개 모델 코드·머신 타입") + '</span>' +
+      (dataVersion ? '<span class="stat">' + T("data ", "데이터 ") + esc(dataVersion) + '</span>' : '');
+  }
+
+  document.getElementById("q").addEventListener("input", render);
+  Array.prototype.forEach.call(document.querySelectorAll(".chip"), function(b){
+    b.addEventListener("click", function(){
+      vendor = b.getAttribute("data-vendor");
+      Array.prototype.forEach.call(document.querySelectorAll(".chip"), function(x){ x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+      render();
+    });
+  });
+
+  // ── checker ──
+  function parsePaste(text){
+    var d = {};
+    text.split(/\r?\n/).forEach(function(line){ var m = line.match(/^\s*([A-Za-z]+)\s*:\s*(.*?)\s*$/); if (m) d[m[1].toLowerCase()] = m[2]; });
+    return { manufacturer: d.systemmanufacturer || d.vendor || "", product: d.systemproductname || d.name || "", family: d.systemfamily || "", version: d.systemversion || d.version || "", baseboard: d.baseboardproduct || "" };
+  }
+  function check(){
+    var out = document.getElementById("checkResult"), text = document.getElementById("paste").value;
+    if (!text.trim() || !profiles.length){ out.innerHTML = ""; return; }
+    var dev = parsePaste(text);
+    if (!dev.manufacturer && !dev.product){ out.innerHTML = '<div class="result warn">' + T("Couldn't read the output — paste the whole result of the command above.", "결과를 읽지 못했어요. 위 명령의 결과 전체를 붙여 넣어 주세요.") + '</div>'; return; }
+    var c = profiles.map(function(p){ return score(dev, p); }).filter(Boolean).sort(function(a,b){ return b.score - a.score; });
+    if (!c.length){ out.innerHTML = '<div class="result warn">' + T("Not in the list yet — the app will ask you to pick a model with the same keyboard. Please request it on GitHub.", "아직 목록에 없어요. 앱이 키보드가 같은 모델을 고르게 안내해요. GitHub로 추가를 요청해 주세요.") + '</div>'; return; }
+    if (c.length > 1 && c[1].score === c[0].score){ out.innerHTML = '<div class="result warn">' + T("Several profiles match equally, so the app will ask you to choose: ", "여러 프로필이 똑같이 맞아서 앱이 고르게 물어봐요: ") + c.filter(function(x){ return x.score === c[0].score; }).map(function(x){ return '<a href="#m-' + esc(x.p.id) + '">' + esc(x.p.name) + '</a>'; }).join(", ") + '</div>'; return; }
+    out.innerHTML = '<div class="result ok">✅ ' + T("Detected automatically as ", "자동으로 인식돼요: ") + '<a href="#m-' + esc(c[0].p.id) + '" data-open="' + esc(c[0].p.id) + '"><b>' + esc(c[0].p.name) + '</b></a> <span class="small">(' + esc(c[0].why) + ')</span></div>';
+  }
+  document.getElementById("paste").addEventListener("input", check);
+  function openHash(){
+    if (location.hash.indexOf("#m-") !== 0) return;
+    var el = document.getElementById(location.hash.slice(1));
+    if (el){ el.open = true; el.scrollIntoView(); }
+  }
+  window.addEventListener("hashchange", openHash);
+  document.addEventListener("click", function(e){
+    var a = e.target.closest && e.target.closest('a[href^="#m-"]');
+    if (!a) return;
+    var el = document.getElementById(a.getAttribute("href").slice(1));
+    if (el) el.open = true;
+  });
+
+  // ── load ──
+  function load(urls){
+    if (!urls.length){ document.getElementById("list").innerHTML = '<div class="empty">' + T("Couldn't load the model list.", "모델 목록을 불러오지 못했어요.") + '</div>'; return; }
+    fetch(urls[0], { cache: "no-cache" }).then(function(r){ if (!r.ok) throw 0; return r.json(); }).then(function(d){
+      dataVersion = d.dataVersion || "";
+      profiles = (d.profiles || []).slice().sort(function(a,b){ return (a.vendor + a.name).localeCompare(b.vendor + b.name); });
+      render(); check();
+      openHash();
+    }).catch(function(){ load(urls.slice(1)); });
+  }
+
+  var saved = null; try { saved = localStorage.getItem("lang"); } catch(e){}
+  setLang(saved || ((navigator.language || "ko").toLowerCase().indexOf("ko") === 0 ? "ko" : "en"));
+  load(["profiles.json", "../data/profiles.json"]);
+})();
+</script>
+</body>
+</html>
