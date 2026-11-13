@@ -42,6 +42,11 @@ ASUS 노트북과 Lenovo 노트북을 같이 쓰면 **Fn 키 배치가 모델마
 | 🪶 | **아주 가벼움** | Rust + Win32로 만든 2 MB짜리 exe 하나예요. 런타임 설치가 필요 없고, 트레이에 상주할 때 메모리를 몇 MB만 써요. |
 | 🔄 | **자동 업데이트** | 하루 한 번 GitHub 릴리스를 확인해서, 새 버전이 있으면 SHA-256을 검증한 뒤 스스로 교체하고 다시 시작해요. 설정에서 끌 수 있어요. |
 
+<p align="center">
+  <img src="docs/assets/screens/settings-device-dark.png" alt="설정 — 기기 (다크)" width="49%" />
+  <img src="docs/assets/screens/settings-trigger-light.png" alt="설정 — 누르기·표시 (라이트)" width="49%" />
+</p>
+
 ## 🤷 왜 Fn이 아니라 Ctrl인가요?
 
 ASUS·Lenovo 노트북 대부분은 Fn 키를 **키보드 컨트롤러(EC) 안에서 처리**해요.
@@ -229,6 +234,11 @@ PowerShell 결과를 붙여 넣으면 내 노트북이 자동으로 인식되는
 <details><summary><b>F1–F12가 Fn 없이 동작하는지, Fn과 함께 동작하는지 헷갈려요.</b></summary>
 
 윗줄은 **Fn 잠금(Fn Lock)** 상태에 따라 달라요. 화면 아래에 모델별 잠금 키(보통 <kbd>Fn</kbd>+<kbd>Esc</kbd>)와 공장 기본값을 적어 두었어요.
+</details>
+
+<details><summary><b>Fn을 길게 눌러도 안 떠요.</b></summary>
+
+정상이에요. 대부분의 노트북은 Fn을 키보드 안에서 처리해서 Windows에 아무 신호도 보내지 않아요. Fn 바로 옆의 **왼쪽 Ctrl**을 길게 누르세요. **원격 데스크톱**으로 접속해 있다면 Fn은 지금 손으로 누르는 키보드에서 처리되므로 원격 PC에는 절대 전달되지 않아요(Ctrl은 전달돼요).
 </details>
 
 <details><summary><b>어떤 창에서는 안 떠요.</b></summary>
