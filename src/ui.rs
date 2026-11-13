@@ -126,6 +126,8 @@ enum Act {
     Github,
     Issues,
     Source(usize),
+    /// The native search box (a tab stop; clicking it focuses the EDIT).
+    Search,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -157,6 +159,11 @@ struct Ui {
     pressed: Option<Act>,
     dragging: Option<(Act, R)>,
     tracking: bool,
+    /// Keyboard focus among the drawn controls, and whether to show the focus ring (keyboard use only).
+    focus: Option<Act>,
+    focus_visible: bool,
+    /// Profile indices of the model list in display order (for arrow keys).
+    row_order: Vec<usize>,
     search: HWND,
     search_font: HFONT,
     search_brush: HBRUSH,
@@ -634,6 +641,7 @@ fn page_device(dc: &mut Dc, s: &Snap, u: &UiView, x0: f32, cw: f32, h: f32) -> (
     }
     // search box (native EDIT sits inside)
     let sr = R::new(x0 + 20.0, y + 66.0, cw - 40.0, 34.0);
+    dc.hit(sr, Act::Search);
     dc.fill(sr, 5.0, p.control);
     dc.stroke(sr, 5.0, p.control_border, 1.0);
     dc.fill(R::new(sr.x + 1.0, sr.y + sr.h - 2.0, sr.w - 2.0, 1.0), 0.0, p.track_off & 0x60FFFFFF);
@@ -974,6 +982,8 @@ fn paint_into(hwnd: HWND, hdc: HDC, pw: i32, ph: i32) -> Result<()> {
         return Ok(());
     };
     let Some(snap) = snapshot(&view.query) else { return Ok(()) };
+    let row_order: Vec<usize> = snap.rows.iter().map(|r| r.idx).collect();
+    let (focus, focus_visible) = ui(|u| (u.focus, u.focus_visible)).unwrap_or((None, false));
     let pal = pal_for(&snap.s.theme);
     let sc = dpi as f32 / 96.0;
     let (wd, hd) = (pw as f32 / sc, ph as f32 / sc);
@@ -1040,6 +1050,12 @@ fn paint_into(hwnd: HWND, hdc: HDC, pw: i32, ph: i32) -> Result<()> {
                 let ty = (hd - th) * (page_scroll / (page_h - hd)).clamp(0.0, 1.0);
                 dc.fill(R::new(wd - 6.0, ty + 2.0, 3.0, th - 4.0), 1.5, pal.track_off & 0x99FFFFFF);
             }
+            if focus_visible {
+                if let Some((r, _)) = dc.hits.iter().find(|(_, a)| Some(*a) == focus) {
+                    let ring = R::new(r.x - 3.0, r.y - 3.0, r.w + 6.0, r.h + 6.0);
+                    dc.stroke(ring, 7.0, pal.text, 2.0);
+                }
+            }
             out = Some((std::mem::take(&mut dc.hits), search, list, list_h, page_h, sliders));
             rt.EndDraw(None, None)
         });
@@ -1053,6 +1069,7 @@ fn paint_into(hwnd: HWND, hdc: HDC, pw: i32, ph: i32) -> Result<()> {
         if let Some((hits, search, list, list_h, page_h, sliders)) = out {
             let edit = ui(|u| {
                 u.hits = hits;
+                u.row_order = row_order.clone();
                 u.list_rect = list;
                 u.list_h = list_h;
                 u.page_h = page_h;
@@ -1151,7 +1168,7 @@ pub fn open(tab: Option<Tab>) {
                 search, search_font: HFONT::default(), search_brush: HBRUSH::default(), search_rect: R::default(), query: String::new(),
                 list_rect: R::default(), list_scroll: 0.0, list_h: 0.0, page_scroll: 0.0, page_h: 0.0, details: false,
                 learning: false, learned: None, learn_saw: false, learn_msg: String::new(), learn_tone: 0,
-                icon: icon_source((64.0 * dpi as f32 / 96.0) as i32), pal,
+                icon: icon_source((64.0 * dpi as f32 / 96.0) as i32), pal, focus: None, focus_visible: false, row_order: vec![],
             })
         });
         apply_dpi_and_theme(hwnd, dpi, None);
@@ -1341,6 +1358,13 @@ fn act(a: Act) {
                 crate::util::open_url(&u);
             }
         }
+        Act::Search => {
+            if let Some(e) = ui(|u| u.search) {
+                unsafe {
+                    let _ = SetFocus(Some(e));
+                }
+            }
+        }
         Act::HoldSlider | Act::ScaleSlider => {}
     }
     repaint();
@@ -1392,6 +1416,10 @@ unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
         WM_LBUTTONDOWN => {
             let (x, _, a) = hit_at(lp);
             let _ = SetFocus(Some(hwnd));
+            ui(|u| {
+                u.focus = a;
+                u.focus_visible = false;
+            });
             if let Some(a) = a {
                 let slider = matches!(a, Act::HoldSlider | Act::ScaleSlider);
                 let rect = ui(|u| {
@@ -1477,6 +1505,10 @@ unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
             let _ = DestroyWindow(hwnd);
             LRESULT(0)
         }
+        WM_KEYDOWN => {
+            if on_key(wp.0 as u16) { LRESULT(0) } else { DefWindowProcW(hwnd, msg, wp, lp) }
+        }
+        WM_GETDLGCODE => LRESULT((DLGC_WANTALLKEYS | DLGC_WANTARROWS | DLGC_WANTTAB) as isize),
         WM_TIMER if wp.0 == TIMER_LEARN => {
             finish_learning();
             LRESULT(0)
@@ -1525,7 +1557,188 @@ unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
 
 // ───────────────────────── helpers kept from the classic UI ─────────────────────────
 
+/// Keyboard navigation over the drawn controls. Returns true when the key was handled.
+fn on_key(vk: u16) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_DOWN, VK_LEFT, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP};
+    let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
+    let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
+    let Some((hits, focus, tab, rows, hwnd, edit)) = ui(|u| (u.hits.clone(), u.focus, u.tab, u.row_order.clone(), u.hwnd, u.search)) else { return false };
+
+    // Ctrl+Tab / Ctrl+PgDn switch pages.
+    if ctrl && (vk == VK_TAB.0 || vk == VK_NEXT.0 || vk == VK_PRIOR.0) {
+        let back = shift || vk == VK_PRIOR.0;
+        let next = match (tab, back) {
+            (Tab::Device, false) | (Tab::About, true) => Tab::Trigger,
+            (Tab::Trigger, false) | (Tab::Device, true) => Tab::About,
+            _ => Tab::Device,
+        };
+        ui(|u| {
+            u.tab = next;
+            u.page_scroll = 0.0;
+            u.focus = Some(Act::Nav(next));
+            u.focus_visible = true;
+        });
+        repaint();
+        return true;
+    }
+
+    // Tab order = paint order; the model list is a single stop (its focused or active row).
+    let active_row = rows.iter().copied().find(|i| hits.iter().any(|(_, a)| *a == Act::Row(*i)));
+    let mut order: Vec<Act> = Vec::new();
+    let mut row_done = false;
+    for (_, a) in &hits {
+        match a {
+            Act::Row(_) => {
+                if !row_done {
+                    row_done = true;
+                    order.push(match focus {
+                        Some(Act::Row(f)) => Act::Row(f),
+                        _ => active_row.map(Act::Row).unwrap_or(*a),
+                    });
+                }
+            }
+            _ if !order.contains(a) => order.push(*a),
+            _ => {}
+        }
+    }
+    if order.is_empty() {
+        return false;
+    }
+    let pos = focus.and_then(|f| order.iter().position(|a| *a == f));
+    let move_to = |a: Act| {
+        ui(|u| {
+            u.focus = Some(a);
+            u.focus_visible = true;
+        });
+        unsafe {
+            let _ = SetFocus(Some(if a == Act::Search { edit } else { hwnd }));
+        }
+        scroll_into_view(a);
+        repaint();
+    };
+
+    match vk {
+        v if v == VK_TAB.0 => {
+            let n = order.len();
+            let i = match pos {
+                Some(p) if shift => (p + n - 1) % n,
+                Some(p) => (p + 1) % n,
+                None if shift => n - 1,
+                None => 0,
+            };
+            move_to(order[i]);
+            true
+        }
+        v if v == VK_RETURN.0 || v == VK_SPACE.0 => {
+            if let Some(f) = focus {
+                ui(|u| u.focus_visible = true);
+                act(f);
+            }
+            true
+        }
+        v if v == VK_UP.0 || v == VK_DOWN.0 => {
+            if let Some(Act::Row(cur)) = focus {
+                let k = rows.iter().position(|i| *i == cur).unwrap_or(0);
+                let k2 = if v == VK_UP.0 { k.saturating_sub(1) } else { (k + 1).min(rows.len().saturating_sub(1)) };
+                if let Some(&i) = rows.get(k2) {
+                    move_to(Act::Row(i));
+                }
+            } else if let Some(p) = pos {
+                let n = order.len();
+                move_to(order[if v == VK_UP.0 { (p + n - 1) % n } else { (p + 1) % n }]);
+            }
+            true
+        }
+        v if v == VK_LEFT.0 || v == VK_RIGHT.0 => {
+            let dir = if v == VK_LEFT.0 { -1.0 } else { 1.0 };
+            match focus {
+                Some(Act::HoldSlider) => {
+                    app::with(|a| a.settings.hold_ms = (a.settings.hold_ms as i32 + dir as i32 * 100).clamp(300, 2000) as u32);
+                    app::apply_settings();
+                    repaint();
+                }
+                Some(Act::ScaleSlider) => {
+                    app::with(|a| a.settings.overlay_scale = ((a.settings.overlay_scale + dir * 0.1) * 10.0).round().clamp(7.0, 16.0) / 10.0);
+                    app::apply_settings();
+                    repaint();
+                }
+                Some(_) => {
+                    if let Some(p) = pos {
+                        let n = order.len();
+                        move_to(order[if dir < 0.0 { (p + n - 1) % n } else { (p + 1) % n }]);
+                    }
+                }
+                None => move_to(order[0]),
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Scrolls the model list or the page so the focused control is visible.
+fn scroll_into_view(a: Act) {
+    let hd = ui(|u| {
+        let mut rc = RECT::default();
+        unsafe {
+            let _ = GetClientRect(u.hwnd, &mut rc);
+        }
+        (rc.bottom - rc.top) as f32 / (u.dpi as f32 / 96.0)
+    })
+    .unwrap_or(H_DIP);
+    ui(|u| {
+        if let Act::Row(i) = a {
+            if let Some(k) = u.row_order.iter().position(|x| *x == i) {
+                let top = k as f32 * 54.0;
+                if top < u.list_scroll {
+                    u.list_scroll = top;
+                } else if top + 54.0 > u.list_scroll + u.list_rect.h {
+                    u.list_scroll = top + 54.0 - u.list_rect.h;
+                }
+            }
+            return;
+        }
+        if u.tab == Tab::Device {
+            return;
+        }
+        if let Some((r, _)) = u.hits.iter().find(|(_, h)| *h == a) {
+            let max = (u.page_h - hd).max(0.0);
+            if r.y < 16.0 {
+                u.page_scroll = (u.page_scroll + r.y - 24.0).clamp(0.0, max);
+            } else if r.y + r.h > hd - 16.0 {
+                u.page_scroll = (u.page_scroll + r.y + r.h - hd + 24.0).clamp(0.0, max);
+            }
+        }
+    });
+}
+
 pub fn is_dialog_message(msg: &MSG) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_TAB};
+    if msg.message == WM_KEYDOWN && (msg.wParam.0 as u16 == VK_TAB.0 || msg.wParam.0 as u16 == VK_DOWN.0) {
+        if let Some((h, edit)) = ui(|u| (u.hwnd, u.search)) {
+            if msg.hwnd == edit {
+                // Leave the search box: Tab continues the tab order, Down jumps into the list.
+                ui(|u| u.focus = Some(Act::Search));
+                unsafe {
+                    let _ = SetFocus(Some(h));
+                }
+                if msg.wParam.0 as u16 == VK_DOWN.0 {
+                    let first = ui(|u| u.row_order.first().copied()).flatten();
+                    if let Some(i) = first {
+                        ui(|u| {
+                            u.focus = Some(Act::Row(i));
+                            u.focus_visible = true;
+                            u.list_scroll = 0.0;
+                        });
+                        repaint();
+                    }
+                } else {
+                    on_key(VK_TAB.0);
+                }
+                return true;
+            }
+        }
+    }
     // Esc in the search box closes the window like everywhere else.
     if msg.message == WM_KEYDOWN && msg.wParam.0 as u16 == VK_ESCAPE.0 {
         if let Some((h, edit)) = ui(|u| (u.hwnd, u.search)) {
