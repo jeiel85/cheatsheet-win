@@ -13,7 +13,9 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Build
         shell: pwsh
         run: |
@@ -24,13 +26,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $ErrorActionPreference = 'Stop'
           $tag = "${{ github.ref_name }}"
           $notes = "docs/release-notes/$tag.md"
           $assets = @('dist/FnCheatsheet.exe', 'dist/FnCheatsheet.exe.sha256')
           gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag @assets --clobber
-            exit $LASTEXITCODE
+          if ($LASTEXITCODE -ne 0) {
+            # Create as a draft first: a published release without its assets would become "latest"
+            # and break the in-app updater and the README download link.
+            $notesArgs = if (Test-Path $notes) { @('--notes-file', $notes) } else { @('--generate-notes') }
+            gh release create $tag --draft --title "Fn Cheatsheet $tag" @notesArgs --verify-tag
+            if ($LASTEXITCODE -ne 0) { throw "release create failed" }
           }
-          $notesArgs = if (Test-Path $notes) { @('--notes-file', $notes) } else { @('--generate-notes') }
-          gh release create $tag @assets --title "Fn Cheatsheet $tag" @notesArgs --verify-tag
+          gh release upload $tag @assets --clobber
+          if ($LASTEXITCODE -ne 0) { throw "asset upload failed" }
+          # Check what GitHub actually serves before publishing.
+          $names = gh release view $tag --json assets -q '.assets[].name'
+          foreach ($a in 'FnCheatsheet.exe', 'FnCheatsheet.exe.sha256') {
+            if ($names -notcontains $a) { throw "missing asset $a" }
+          }
+          gh release edit $tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw "publish failed" }

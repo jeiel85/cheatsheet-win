@@ -322,8 +322,21 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             LRESULT(0)
         }
         WM_TIMER if wp.0 == TIMER_UPDATE || wp.0 == update::TIMER_FIRST => {
+            if wp.0 == TIMER_UPDATE {
+                hook::reinstall();
+            }
             update::check_if_due(hwnd);
             LRESULT(0)
+        }
+        WM_WTSSESSION_CHANGE if wp.0 as u32 == WTS_SESSION_UNLOCK => {
+            hide_overlay();
+            hook::reinstall();
+            LRESULT(0)
+        }
+        WM_POWERBROADCAST if wp.0 as u32 == PBT_APMRESUMEAUTOMATIC => {
+            hide_overlay();
+            hook::reinstall();
+            LRESULT(1)
         }
         WM_SETTINGCHANGE => {
             // Theme changes are picked up at the next show; nothing cached to refresh.
@@ -391,6 +404,7 @@ pub fn run(background: bool, updated_from: Option<String>) -> i32 {
         OVERLAY.with(|o| *o.borrow_mut() = Some(Overlay::create()));
 
         add_tray(hwnd);
+        let _ = windows::Win32::System::RemoteDesktop::WTSRegisterSessionNotification(hwnd, windows::Win32::System::RemoteDesktop::NOTIFY_FOR_THIS_SESSION);
         hook::start(hwnd, &settings);
         if startup::points_elsewhere() {
             startup::set(true); // the exe moved: keep "start with Windows" pointing here

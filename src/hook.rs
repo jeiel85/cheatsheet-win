@@ -19,6 +19,7 @@ pub const WM_APP_HIDE: u32 = WM_APP + 2;
 pub const WM_APP_LEARN_KEY: u32 = WM_APP + 3;
 const WM_APP_RECONFIG: u32 = WM_APP + 10;
 const WM_APP_DROP_MOUSE: u32 = WM_APP + 11;
+const WM_APP_REINSTALL: u32 = WM_APP + 12;
 
 static MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
 static THREAD_ID: AtomicU32 = AtomicU32::new(0);
@@ -87,6 +88,12 @@ pub fn configure(s: &Settings) {
     post_self(WM_APP_RECONFIG);
 }
 
+/// Windows silently removes a low-level hook whose callback ever times out, and input stops on the secure
+/// desktop. Re-installing after unlock/resume (and periodically) keeps the trigger alive.
+pub fn reinstall() {
+    post_self(WM_APP_REINSTALL);
+}
+
 pub fn set_learning(on: bool) {
     LEARNING.store(on, Ordering::Relaxed);
     post_self(WM_APP_RECONFIG);
@@ -106,6 +113,15 @@ fn thread_main() {
                     ensure_keyboard_hook();
                 }
                 WM_APP_DROP_MOUSE => remove_mouse_hook(),
+                WM_APP_REINSTALL => {
+                    reset();
+                    ST.with(|st| {
+                        if let Some(h) = st.borrow_mut().kb.take() {
+                            let _ = UnhookWindowsHookEx(h);
+                        }
+                    });
+                    ensure_keyboard_hook();
+                }
                 WM_TIMER if msg.hwnd.0.is_null() => on_hold_elapsed(msg.wParam.0),
                 _ => {
                     let _ = TranslateMessage(&msg);
