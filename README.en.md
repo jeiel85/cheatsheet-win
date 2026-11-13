@@ -35,7 +35,7 @@ The Mac has CheatSheet (hold <kbd>⌘</kbd> to see shortcuts). Windows laptops h
 |:-:|---|---|
 | 🔍 | **Detects your model** | Uses the maker and model code Windows already knows (ASUS `P1503CVA`, Lenovo machine type `21HM`, …) to pick the matching keyboard profile. |
 | 🙅 | **Never guesses** | Unknown model, or several candidates? You get "pick your model" instead of a wrong map. A matching manufacturer alone never selects a profile. |
-| ⌨️ | **Hold to show** | Hold <kbd>Left Ctrl</kbd> alone for 0.9 s. Any other key, click or scroll cancels it, so <kbd>Ctrl</kbd>+<kbd>C</kbd> and <kbd>Ctrl</kbd>+click behave as always. Key and delay are configurable. |
+| ⌨️ | **Hold or double-tap** | Hold <kbd>Left Ctrl</kbd> alone for 0.9 s, or tap it twice quickly (your choice in Settings). Any other key, click or scroll cancels it, so <kbd>Ctrl</kbd>+<kbd>C</kbd> and <kbd>Ctrl</kbd>+click behave as always. |
 | 📖 | **From official manuals** | Every key comes from the maker's own documentation (ASUS E-Manual, Lenovo User Guide…). Settings → About links the sources. |
 | 🧩 | **Pick or add your own** | Choose a model in Settings, or drop JSON profiles into `%APPDATA%\FnCheatsheet\profiles\`. |
 | 🌗 | **Korean/English, dark/light** | Follows the Windows language and theme, and appears centered on the screen you're working on — multi-monitor and high-DPI aware. |
@@ -56,6 +56,16 @@ Pressed alone it sends **nothing to Windows**, so no app can tell that it's bein
 - ThinkPads can **swap Fn and Ctrl** in BIOS or Lenovo Vantage.
 - If your Fn key *does* send a signal, use **Settings → Trigger & display → Capture** to make Fn itself the trigger — the same screen tells you whether anything arrives.
 - Clicking the tray icon shows the sheet any time.
+
+### 🔬 Does my Fn key really send nothing? — FnProbe
+
+[**FnProbe.exe**](https://github.com/jeiel85/cheatsheet-win/releases/latest/download/FnProbe.exe) checks **every channel** Windows can see when Fn is pressed alone. It only reads; nothing is changed.
+
+- Keyboard hook (scan codes), raw input from every HID device (vendor pages included), vendor WMI events (ASUS ATK, Lenovo, ThinkPad…)
+- ASUS: compares thousands of ACPI device-status values with Fn held vs. released (DSTS, read-only), filtering values that drift on their own (fan speed …)
+- Follow the prompts; a report is saved to your desktop. If it finds a signal, please open an issue — that model can then use **Fn itself** as the trigger
+
+Run it at the laptop itself: over Remote Desktop, Fn never reaches the remote PC.
 
 ## 💻 Supported laptops
 

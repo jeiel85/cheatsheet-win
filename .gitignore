@@ -16,3 +16,6 @@ target/
 
 # Local tooling
 .claude/
+
+# Built by build.ps1
+tools/fn-probe/*.exe

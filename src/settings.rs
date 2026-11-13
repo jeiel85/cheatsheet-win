@@ -23,6 +23,8 @@ pub struct Settings {
     pub trigger_extended: bool,
     pub hold_ms: u32,
     pub trigger_enabled: bool,
+    /// "hold" | "double" | "both"
+    pub trigger_style: String,
     /// Don't show while a full-screen app or game is in front.
     pub skip_fullscreen: bool,
     /// "auto" | "ko" | "en"
@@ -45,6 +47,7 @@ impl Default for Settings {
             trigger_extended: false,
             hold_ms: 900,
             trigger_enabled: true,
+            trigger_style: "hold".into(),
             skip_fullscreen: true,
             language: "auto".into(),
             theme: "auto".into(),
@@ -85,6 +88,7 @@ impl Settings {
 
     pub fn sanitized(mut self) -> Settings {
         self.profile_mode = one_of(&self.profile_mode, &["auto", "manual"], "auto");
+        self.trigger_style = one_of(&self.trigger_style, &["hold", "double", "both"], "hold");
         self.language = one_of(&self.language, &["auto", "ko", "en"], "auto");
         self.theme = one_of(&self.theme, &["auto", "dark", "light"], "auto");
         self.trigger_vk = self.trigger_vk.clamp(1, 254);

@@ -252,7 +252,7 @@ fn show_menu(hwnd: HWND) {
         add(MF_STRING, CMD_SHOW, t("Show cheat sheet", "치트시트 보기"));
         add(MF_STRING, CMD_MODEL, &model.unwrap_or_else(|| t("Model not set — choose…", "모델 미설정 — 고르기…").to_string()));
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-        add(if paused { MF_STRING | MF_CHECKED } else { MF_STRING }, CMD_PAUSE, t("Pause hold trigger", "길게 누르기 일시 중지"));
+        add(if paused { MF_STRING | MF_CHECKED } else { MF_STRING }, CMD_PAUSE, t("Pause key trigger", "키 트리거 일시 중지"));
         add(MF_STRING, CMD_SETTINGS, t("Settings…", "설정…"));
         add(MF_STRING, CMD_UPDATE, &upd);
         add(MF_STRING, CMD_SITE, t("Supported laptops (web)", "지원 노트북 목록 (웹)"));
