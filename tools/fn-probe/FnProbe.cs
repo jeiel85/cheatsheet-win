@@ -59,6 +59,7 @@ static class FnProbe
     [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string n);
     [StructLayout(LayoutKind.Sequential)] struct KB { public uint vk, scan, flags, time; public IntPtr extra; }
     static HookProc hookProc;
+    static Sink sink;
 
     // ───────────────────────── raw input ─────────────────────────
     const int WM_INPUT = 0x00FF;
@@ -354,7 +355,7 @@ static class FnProbe
                 return CallNextHookEx(IntPtr.Zero, c, w, l);
             };
             SetWindowsHookEx(13, hookProc, GetModuleHandle(null), 0);
-            var sink = new Sink();
+            sink = new Sink(); // static: a NativeWindow that gets garbage-collected destroys its window and stops WM_INPUT
             RegisterRawInput(sink.Handle);
             ready.Set();
             Application.Run();
@@ -418,6 +419,11 @@ static class FnProbe
             foreach (var sig in fnSignals) Say("      " + sig);
             if (dstsFollows) Say("      " + string.Join(", ", confirmHits.Keys.Where(k => k.StartsWith("DSTS follows"))));
         }
+        else if (SystemInformation.TerminalServerSession)
+            // Keyboard hook and raw input only see this (remote) session's input, not the laptop's own keyboard;
+            // WMI events and ACPI values are hardware-wide and still count.
+            Say(T("  ~ Remote Desktop session: no Fn signal in the hardware channels (vendor WMI, ACPI). The keyboard and HID channels only saw the remote keyboard, so they are NOT checked — run again at the laptop for a full answer.",
+                  "  ~ 원격 데스크톱 세션: 하드웨어 경로(제조사 WMI, ACPI)에서는 Fn 신호가 없어요. 키보드·HID 경로는 원격 쪽 키보드만 봐서 확인되지 않았어요. 노트북 앞에서 다시 실행해야 완전한 판정이 나와요."));
         else
             Say(T("  ✗ Nothing follows the Fn key on any channel Windows offers. This laptop handles Fn inside the keyboard controller.",
                   "  ✗ Fn만 눌렀을 때 Windows가 볼 수 있는 어떤 경로로도 신호가 오지 않아요. 이 노트북은 Fn을 키보드 컨트롤러 안에서 처리해요."));
