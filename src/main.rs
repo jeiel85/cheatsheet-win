@@ -6,6 +6,7 @@
 //!   FnCheatsheet.exe --render <profile-id|unknown> <out.png> [ko|en] [dark|light]
 //!   FnCheatsheet.exe --device           print this PC's model strings and the match result
 //!   FnCheatsheet.exe --foreground [sec] wait, then print whether the window in front counts as full screen
+//!   FnCheatsheet.exe --verify-update <exe> <exe.sig> <version>  check a release signature like the updater does
 #![windows_subsystem = "windows"]
 
 mod app;
@@ -35,7 +36,7 @@ use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW};
 
 fn console_command(args: &[String]) -> Option<i32> {
     let cmd = args.first()?.as_str();
-    if !matches!(cmd, "--selftest" | "--render" | "--device" | "--foreground") {
+    if !matches!(cmd, "--selftest" | "--render" | "--device" | "--foreground" | "--verify-update") {
         return None;
     }
     unsafe {
@@ -53,6 +54,23 @@ fn console_command(args: &[String]) -> Option<i32> {
                 let (report, fails) = selftest::run(&db, cases.as_deref());
                 lines.extend(report);
                 (fails > 0) as i32
+            }
+        }
+        "--verify-update" => {
+            if args.len() < 4 {
+                lines.push("usage: --verify-update <exe> <exe.sig> <version>".into());
+                2
+            } else {
+                match update::verify_release_files(std::path::Path::new(&args[1]), std::path::Path::new(&args[2]), &args[3]) {
+                    Ok(()) => {
+                        lines.push(format!("OK signature valid for {} {}", args[1], args[3]));
+                        0
+                    }
+                    Err(e) => {
+                        lines.push(format!("FAIL {e}"));
+                        1
+                    }
+                }
             }
         }
         "--foreground" => {

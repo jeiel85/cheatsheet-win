@@ -40,7 +40,7 @@ The Mac has CheatSheet (hold <kbd>⌘</kbd> to see shortcuts). Windows laptops h
 | 🧩 | **Pick or add your own** | Choose a model in Settings, or drop JSON profiles into `%APPDATA%\FnCheatsheet\profiles\`. |
 | 🌗 | **Korean/English, dark/light** | Follows the Windows language and theme, and appears centered on the screen you're working on — multi-monitor and high-DPI aware. |
 | 🪶 | **Featherweight** | A single ~2 MB exe written in Rust on plain Win32. No runtime to install; a few MB of memory while it waits in the tray. |
-| 🔄 | **Auto-update** | Checks GitHub releases once a day; a new version is verified (SHA-256) and swapped in with a restart. Can be turned off. |
+| 🔄 | **Auto-update** | Checks GitHub releases once a day; a new version is verified (**developer signature** + SHA-256) and swapped in with a restart. Can be turned off. |
 
 <p align="center">
   <img src="docs/assets/screens/settings-device-dark.png" alt="Settings — Device (dark)" width="49%" />
@@ -231,13 +231,14 @@ Not listed? **Settings → Device → Request this model** opens an issue with y
 
 - Requires Windows 10 1903+ or Windows 11. No installer, no runtime, no admin rights.
 - Auto-update needs write access to the exe's folder (e.g. `D:\Util`, `%LOCALAPPDATA%\Programs`). In an admin-only folder such as `C:\Program Files` it can only tell you about new versions.
-- If SmartScreen warns, choose **More info → Run anyway**. Each release ships `FnCheatsheet.exe.sha256`.
+- If SmartScreen warns, choose **More info → Run anyway**. Each release ships `FnCheatsheet.exe.sha256` (checksum) and `FnCheatsheet.exe.sig` (update signature).
 - To remove: turn off Start with Windows, then delete the exe and `%APPDATA%\FnCheatsheet`.
 
 ## 🔒 Privacy & security
 
 - **The network is used only for updates.** Once a day it asks `api.github.com` for the latest release and downloads only from `github.com/jeiel85/cheatsheet-win/releases/download/…`. Nothing is sent anywhere else. Can be turned off in Settings.
 - **Downloads are verified before use.** Size, the release's SHA-256 file and the executable header are checked; on any failure the old exe is restored.
+- **Updates are signed (since v0.1.6).** They're signed with a key that lives only on the developer's PC and checked against the public key built into the app, so a hijacked GitHub account or swapped release files can't install a fake update. See [SECURITY.md](SECURITY.md).
 - **Never elevated** (`asInvoker`). No service, driver or scheduled task.
 - The keyboard hook **only checks whether the trigger key is held alone** and never stores what you type. It doesn't block or change any input.
 - Device detection reads **model strings only** — no serial numbers or UUIDs.
@@ -273,7 +274,7 @@ It sits in the tray all day, so it's built to be **as light as possible**. The f
 
 <details><summary><b>How does auto-update work?</b></summary>
 
-About 90 seconds after start, then once a day, it checks the latest GitHub release. If it's newer it downloads `FnCheatsheet.exe` and `FnCheatsheet.exe.sha256`, verifies size, hash and the executable header, renames the running exe to `.old`, moves the new one in and restarts — rolling back on any error. **Check for updates** in the tray menu checks right away.
+About 90 seconds after start, then once a day, it checks the latest GitHub release. If it's newer it downloads `FnCheatsheet.exe`, `.sha256` and `.sig`, verifies size, hash, signature and the executable header, renames the running exe to `.old`, moves the new one in and restarts — rolling back on any error. **Check for updates** in the tray menu checks right away.
 </details>
 
 <details><summary><b>Dell, HP, Samsung, LG?</b></summary>
@@ -291,7 +292,7 @@ Needs [Rust](https://rustup.rs) (MSVC toolchain) and Visual Studio Build Tools (
 .\dist\FnCheatsheet.exe --render <profile-id> out.png en dark      # render the overlay to PNG
 ```
 
-Pushing a `v*.*.*` tag builds, tests and publishes a release; changes to `docs/` or `data/` on `main` redeploy the website.
+Releases are built, signed and published from the maintainer's PC with `tools/release.ps1` (so the signing key never reaches GitHub). Actions builds and tests PRs and `main`; changes to `docs/` or `data/` on `main` redeploy the website.
 
 ## 📄 License
 

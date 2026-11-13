@@ -3,7 +3,7 @@
   profile self-test (data schema + SMBIOS match cases).
 
   .\build.ps1                    # version from Cargo.toml
-  .\build.ps1 -Version 0.1.0     # stamp a version (release workflow passes the tag)
+  .\build.ps1 -Version 0.1.0     # stamp a version (tools/release.ps1 passes it)
   .\build.ps1 -SkipTests
 #>
 param(

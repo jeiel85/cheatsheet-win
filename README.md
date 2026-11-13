@@ -40,7 +40,7 @@ ASUS 노트북과 Lenovo 노트북을 같이 쓰면 **Fn 키 배치가 모델마
 | 🧩 | **직접 고르기·추가** | 설정에서 모델을 고르거나, `%APPDATA%\FnCheatsheet\profiles\`에 JSON 파일을 넣어 내 프로필을 추가할 수 있어요. |
 | 🌗 | **한국어·영어, 다크·라이트** | Windows 언어와 테마를 따라가고, 멀티 모니터·고해상도(DPI)에서도 작업 중인 화면 가운데에 떠요. |
 | 🪶 | **아주 가벼움** | Rust + Win32로 만든 2 MB짜리 exe 하나예요. 런타임 설치가 필요 없고, 트레이에 상주할 때 메모리를 몇 MB만 써요. |
-| 🔄 | **자동 업데이트** | 하루 한 번 GitHub 릴리스를 확인해서, 새 버전이 있으면 SHA-256을 검증한 뒤 스스로 교체하고 다시 시작해요. 설정에서 끌 수 있어요. |
+| 🔄 | **자동 업데이트** | 하루 한 번 GitHub 릴리스를 확인해서, 새 버전이 있으면 **개발자 서명**과 SHA-256을 검증한 뒤 스스로 교체하고 다시 시작해요. 설정에서 끌 수 있어요. |
 
 <p align="center">
   <img src="docs/assets/screens/settings-device-dark.png" alt="설정 — 기기 (다크)" width="49%" />
@@ -232,13 +232,14 @@ PowerShell 결과를 붙여 넣으면 내 노트북이 자동으로 인식되는
 
 - 요구 사항: Windows 10 1903 이상 / Windows 11. 설치 프로그램·런타임·관리자 권한 모두 필요 없어요.
 - exe를 둔 폴더에 쓰기 권한이 있어야 자동 업데이트가 돼요(예: `D:\Util`, `%LOCALAPPDATA%\Programs`). `C:\Program Files`처럼 관리자 권한이 필요한 폴더에서는 업데이트 알림만 보여 줘요.
-- SmartScreen 경고가 뜨면 **추가 정보 → 실행**. 릴리스마다 `FnCheatsheet.exe.sha256`을 함께 올려요.
+- SmartScreen 경고가 뜨면 **추가 정보 → 실행**. 릴리스마다 `FnCheatsheet.exe.sha256`(체크섬)과 `FnCheatsheet.exe.sig`(업데이트 서명)를 함께 올려요.
 - 지우려면 설정에서 시작 시 실행을 끄고 exe와 `%APPDATA%\FnCheatsheet` 폴더를 지우면 끝이에요.
 
 ## 🔒 개인정보·보안
 
 - **네트워크는 업데이트 확인에만 써요.** 하루 한 번 `api.github.com`에 최신 릴리스를 묻고, 새 버전이 있을 때만 `github.com/jeiel85/cheatsheet-win/releases/download/…`에서 받아요. 다른 곳으로는 아무것도 보내지 않아요. 설정에서 끌 수 있어요.
 - **받은 파일은 검증한 뒤에만 바꿔요.** 크기, 릴리스에 함께 올린 SHA-256, 실행 파일 형식을 확인하고, 실패하면 원래 exe로 되돌려요.
+- **업데이트는 서명돼 있어요 (v0.1.6부터).** 개발자 PC에만 있는 키로 서명하고, 앱에 들어 있는 공개 키로 확인해요. GitHub 계정이 털리거나 릴리스 파일이 바꿔치기돼도 가짜 업데이트는 설치되지 않아요. 자세한 내용은 [SECURITY.md](SECURITY.md).
 - **관리자 권한 없이** 동작해요(`asInvoker`). 서비스·드라이버·예약 작업 없음.
 - 키보드 후킹은 **트리거 키를 혼자 누르고 있는지만** 확인하고, 입력 내용은 저장하지 않아요. 키 입력을 막거나 바꾸지도 않아요.
 - 기기 정보는 **모델 문자열만** 읽어요(일련번호·UUID 읽지 않음).
@@ -274,7 +275,7 @@ PowerShell 결과를 붙여 넣으면 내 노트북이 자동으로 인식되는
 
 <details><summary><b>자동 업데이트는 어떻게 동작하나요?</b></summary>
 
-시작 후 약 1분 반, 그 뒤로는 하루 한 번 GitHub 최신 릴리스를 확인해요. 새 버전이 있으면 `FnCheatsheet.exe`와 `FnCheatsheet.exe.sha256`을 받아 크기·해시·실행 파일 형식을 확인하고, 기존 exe를 `.old`로 바꾼 뒤 새 exe로 교체하고 다시 시작해요. 문제가 생기면 원래 exe로 되돌려요. 트레이 메뉴의 **업데이트 확인**으로 바로 확인할 수도 있어요.
+시작 후 약 1분 반, 그 뒤로는 하루 한 번 GitHub 최신 릴리스를 확인해요. 새 버전이 있으면 `FnCheatsheet.exe`, `.sha256`, `.sig`를 받아 크기·해시·서명·실행 파일 형식을 확인하고, 기존 exe를 `.old`로 바꾼 뒤 새 exe로 교체하고 다시 시작해요. 문제가 생기면 원래 exe로 되돌려요. 트레이 메뉴의 **업데이트 확인**으로 바로 확인할 수도 있어요.
 </details>
 
 <details><summary><b>Dell·HP·삼성·LG는요?</b></summary>
@@ -292,7 +293,7 @@ PowerShell 결과를 붙여 넣으면 내 노트북이 자동으로 인식되는
 .\dist\FnCheatsheet.exe --render <profile-id> out.png ko dark      # 오버레이를 PNG로
 ```
 
-`v*.*.*` 태그를 푸시하면 Actions가 빌드·검사 후 릴리스를 만들고, `main`의 `docs/`·`data/`가 바뀌면 소개 페이지가 다시 배포돼요.
+릴리스는 개발자 PC에서 `tools/release.ps1`로 빌드·서명·게시해요(서명 키가 GitHub에 올라가지 않도록). PR과 `main` 푸시는 Actions가 빌드·검사하고, `main`의 `docs/`·`data/`가 바뀌면 소개 페이지가 다시 배포돼요.
 
 ## 📄 라이선스
 
