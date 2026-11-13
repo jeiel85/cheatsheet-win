@@ -99,7 +99,7 @@ static class FnProbe
                 uint each = (uint)Marshal.ReadInt32(buf, hdr), count = (uint)Marshal.ReadInt32(buf, hdr + 4);
                 var bytes = new byte[Math.Min(64, each * count)];
                 Marshal.Copy(buf + hdr + 8, bytes, 0, bytes.Length);
-                Event("RAW HID", (dn ?? "?") + "  " + BitConverter.ToString(bytes), "HID " + (dn ?? "?") + (bytes.Length > 0 ? " report " + bytes[0] : ""));
+                Event("RAW HID", (dn ?? "?") + "  " + BitConverter.ToString(bytes), "HID " + (dn ?? "?") + " " + BitConverter.ToString(bytes, 0, Math.Min(bytes.Length, 16)));  // payload included: an Fn bit may flip inside a periodic report
             }
             else if (type == RIM_TYPEKEYBOARD)
             {
@@ -398,8 +398,9 @@ static class FnProbe
         }
         // The input check needs the A key itself (vk 0x41), not just any traffic.
         bool controlOk = control.Keys.Any(k => k.StartsWith("KEY vk=0x41"));
-        // An Fn signal is a source that is new in the Fn phase (not in idle/control), or clearly busier than
-        // in the idle baseline (Fn phase is 12 s, idle 5 s).
+        // An Fn signal is a source/payload that is new in the Fn phase (not in idle/control), or clearly busier
+        // than in the idle baseline (Fn phase is 12 s, idle 5 s). HID signatures include the report bytes, so a
+        // state bit that changes while Fn is held shows up as a new signature even at an unchanged report rate.
         var fnSignals = fn.Where(kv =>
         {
             int idleN; idle.TryGetValue(kv.Key, out idleN);
