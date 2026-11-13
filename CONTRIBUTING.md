@@ -9,7 +9,9 @@ Every key in a profile must come from the **maker's own documentation for that e
 the ASUS E-Manual, the Lenovo User Guide, Lenovo PSREF or a vendor KB article. Put the link in `sources`
 (with the page number for PDFs), `"kind": "official"`. An unmodified copy of the vendor's PDF hosted elsewhere
 (when the vendor link is dead) may be cited as `"kind": "official-copy"`. Reviews, forums and Reddit may only back up
-*detection strings*, marked `"kind": "community"`.
+*detection strings*, marked `"kind": "community"`. A key that the manual leaves out but that was tested on a real
+machine may be added with an issue documenting the test, cited as `"kind": "device-test"` — only for the model that was
+tested.
 
 A wrong key is worse than a missing model, so if something differs by year or SKU, split the profile or add a
 `note_en` / `note_ko` to that key instead of guessing.

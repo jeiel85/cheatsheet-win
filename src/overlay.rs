@@ -54,7 +54,7 @@ pub fn palette_for(setting: &str) -> Palette {
     }
 }
 
-fn color(argb: u32) -> D2D1_COLOR_F {
+pub(crate) fn color(argb: u32) -> D2D1_COLOR_F {
     D2D1_COLOR_F {
         r: ((argb >> 16) & 0xFF) as f32 / 255.0,
         g: ((argb >> 8) & 0xFF) as f32 / 255.0,
@@ -99,9 +99,9 @@ fn sup(n: usize) -> String {
     n.to_string().chars().map(|c| D[c as usize - '0' as usize]).collect()
 }
 
-struct Gfx {
-    d2d: ID2D1Factory,
-    dw: IDWriteFactory,
+pub(crate) struct Gfx {
+    pub(crate) d2d: ID2D1Factory,
+    pub(crate) dw: IDWriteFactory,
 }
 
 thread_local! {
@@ -118,7 +118,7 @@ pub fn shutdown() {
     });
 }
 
-fn with_gfx<R>(f: impl FnOnce(&Gfx) -> Result<R>) -> Result<R> {
+pub(crate) fn with_gfx<R>(f: impl FnOnce(&Gfx) -> Result<R>) -> Result<R> {
     GFX.with(|g| {
         let mut g = g.borrow_mut();
         if g.is_none() {
@@ -132,19 +132,19 @@ fn with_gfx<R>(f: impl FnOnce(&Gfx) -> Result<R>) -> Result<R> {
     })
 }
 
-struct Text {
-    layout: IDWriteTextLayout,
-    w: f32,
-    h: f32,
+pub(crate) struct Text {
+    pub(crate) layout: IDWriteTextLayout,
+    pub(crate) w: f32,
+    pub(crate) h: f32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Align {
+pub(crate) enum Align {
     Left,
     Center,
 }
 
-fn text(g: &Gfx, s: &str, size: f32, bold: bool, font: &str, max_w: f32, align: Align, wrap: bool) -> Result<Text> {
+pub(crate) fn text(g: &Gfx, s: &str, size: f32, bold: bool, font: &str, max_w: f32, align: Align, wrap: bool) -> Result<Text> {
     unsafe {
         let fam = w(font);
         let loc = w(if crate::i18n::korean() { "ko-KR" } else { "en-US" });

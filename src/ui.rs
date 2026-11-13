@@ -1,22 +1,33 @@
-//! Settings window — plain Win32 controls, three tabs, per-monitor DPI aware.
-//! State lives in a thread-local; no borrow is held while calling into Win32 (controls send notifications back).
+//! Settings window in the style of Windows 11 Settings: a navigation sidebar, cards, toggle switches,
+//! segmented buttons and sliders — all drawn with the same Direct2D/DirectWrite code as the overlay
+//! (software rasterizer, no UI framework, no WebView). Only the search box is a native EDIT control.
+//!
+//! The UI is immediate-mode: every paint lays out the page from the current state and records hit
+//! rectangles; mouse input is matched against them. No borrow of the UI state is held across Win32 calls.
 use std::cell::RefCell;
 
-use windows::core::{w as wlit, PCWSTR};
-use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{CreateFontIndirectW, DeleteObject, GetSysColor, GetSysColorBrush, SetBkColor, SetTextColor, COLOR_WINDOW, HDC, HFONT, HGDIOBJ};
+use windows::core::{w as wlit, Interface, Result, PCWSTR};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Graphics::Direct2D::Common::*;
+use windows::Win32::Graphics::Direct2D::*;
+use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE};
+use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
+use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::Graphics::Imaging::*;
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-use windows::Win32::UI::Controls::*;
-use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow, SystemParametersInfoForDpi};
-use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
+use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
+use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_ESCAPE};
 use windows::Win32::UI::WindowsAndMessaging::*;
+use windows_numerics::Vector2;
 
 use crate::app;
 use crate::i18n::t;
 use crate::matcher::MatchKind;
-use crate::settings::{VK_ANY_CTRL, VK_APPS, VK_LCONTROL, VK_RSHIFT};
+use crate::overlay::{color, text as dw_text, with_gfx, Align, Gfx};
+use crate::settings::{Settings, VK_ANY_CTRL, VK_APPS, VK_LCONTROL, VK_RSHIFT};
 use crate::util::{from_wide, url_encode, user_profiles_dir, w, APP_VERSION, REPO_URL, SITE_URL};
 use crate::{hook, startup, update};
 
@@ -28,123 +39,1070 @@ pub enum Tab {
 }
 
 const CLASS: PCWSTR = wlit!("FnCheatsheetSettings");
-const W_DIP: i32 = 680;
-const H_DIP: i32 = 650;
+const W_DIP: f32 = 880.0;
+const H_DIP: f32 = 680.0;
+const SIDEBAR: f32 = 228.0;
+const PAD: f32 = 36.0;
 const TIMER_LEARN: usize = 1;
+const ID_SEARCH: i32 = 100;
+const FONT: &str = "Segoe UI";
+const ICONS: &str = "Segoe MDL2 Assets";
 
-// control ids
-const ID_TAB: i32 = 10;
-const ID_DEV_REPORT: i32 = 101;
-const ID_DET: i32 = 102;
-const ID_COPY: i32 = 103;
-const ID_REQUEST: i32 = 104;
-const ID_AUTO: i32 = 105;
-const ID_MANUAL: i32 = 106;
-const ID_SEARCH: i32 = 107;
-const ID_LIST: i32 = 108;
-const ID_ACTIVE: i32 = 109;
-const ID_PREVIEW: i32 = 110;
-const ID_FOLDER: i32 = 111;
-const ID_RELOAD: i32 = 112;
-const ID_TRIG_ENABLED: i32 = 201;
-const ID_TRIG_KEY: i32 = 202;
-const ID_HOLD: i32 = 203;
-const ID_HOLD_LABEL: i32 = 204;
-const ID_SKIP_FS: i32 = 205;
-const ID_LEARN: i32 = 206;
-const ID_USE_LEARNED: i32 = 207;
-const ID_LEARN_STATUS: i32 = 208;
-const ID_STARTUP: i32 = 209;
-const ID_LANG: i32 = 210;
-const ID_THEME: i32 = 211;
-const ID_SCALE: i32 = 212;
-const ID_SCALE_LABEL: i32 = 213;
-const ID_PREVIEW2: i32 = 214;
-const ID_AUTO_UPDATE: i32 = 301;
-const ID_CHECK_NOW: i32 = 302;
-const ID_UPDATE_STATUS: i32 = 303;
-const ID_SITE: i32 = 304;
-const ID_GITHUB: i32 = 305;
-const ID_ISSUES: i32 = 306;
-const ID_SOURCES: i32 = 307;
-const ID_OPEN_SOURCE: i32 = 308;
+// ───────────────────────── palette ─────────────────────────
 
-const GOOD: u32 = 0x00417C10; // COLORREF is 0x00BBGGRR
-const WARN: u32 = 0x00005B9A;
+#[derive(Clone, Copy)]
+struct Pal {
+    dark: bool,
+    bg: u32,
+    card: u32,
+    card_border: u32,
+    divider: u32,
+    text: u32,
+    sub: u32,
+    accent: u32,
+    on_accent: u32,
+    accent_soft: u32,
+    hover: u32,
+    pressed: u32,
+    control: u32,
+    control_border: u32,
+    track_off: u32,
+    good: u32,
+    warn: u32,
+}
+
+const LIGHT: Pal = Pal {
+    dark: false, bg: 0xFFF3F3F3, card: 0xFFFFFFFF, card_border: 0xFFE5E5E5, divider: 0xFFEAEAEA, text: 0xFF1B1B1B, sub: 0xFF5F5F5F,
+    accent: 0xFF0067C0, on_accent: 0xFFFFFFFF, accent_soft: 0x1A0067C0, hover: 0x0A000000, pressed: 0x14000000,
+    control: 0xFFFBFBFB, control_border: 0xFFD6D6D6, track_off: 0xFF8A8A8A, good: 0xFF0F7B0F, warn: 0xFF9D5D00,
+};
+const DARK: Pal = Pal {
+    dark: true, bg: 0xFF202020, card: 0xFF2B2B2B, card_border: 0xFF1F1F1F, divider: 0xFF3A3A3A, text: 0xFFFFFFFF, sub: 0xFFC8C8C8,
+    accent: 0xFF4CC2FF, on_accent: 0xFF000000, accent_soft: 0x264CC2FF, hover: 0x10FFFFFF, pressed: 0x1AFFFFFF,
+    control: 0xFF2F2F2F, control_border: 0xFF454545, track_off: 0xFF9A9A9A, good: 0xFF6CCB5F, warn: 0xFFFCE100,
+};
+
+fn pal_for(theme: &str) -> Pal {
+    match theme {
+        "dark" => DARK,
+        "light" => LIGHT,
+        _ => {
+            if app::apps_use_light_theme() { LIGHT } else { DARK }
+        }
+    }
+}
+
+fn colorref(argb: u32) -> COLORREF {
+    COLORREF(((argb & 0xFF) << 16) | (argb & 0xFF00) | ((argb >> 16) & 0xFF))
+}
+
+// ───────────────────────── state ─────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Act {
+    Nav(Tab),
+    CopyInfo,
+    Request,
+    Details,
+    ModeAuto,
+    ModeManual,
+    Row(usize),
+    Preview,
+    Folder,
+    Reload,
+    TriggerEnabled,
+    Key(u32),
+    HoldSlider,
+    SkipFs,
+    LearnStart,
+    LearnUse,
+    Startup,
+    Lang(u8),
+    Theme(u8),
+    ScaleSlider,
+    AutoUpdate,
+    CheckNow,
+    Site,
+    Github,
+    Issues,
+    Source(usize),
+}
+
+#[derive(Clone, Copy, Default)]
+struct R {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+}
+
+impl R {
+    fn new(x: f32, y: f32, w: f32, h: f32) -> R {
+        R { x, y, w, h }
+    }
+    fn contains(&self, px: f32, py: f32) -> bool {
+        px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
+    }
+    fn d2d(&self) -> D2D_RECT_F {
+        D2D_RECT_F { left: self.x, top: self.y, right: self.x + self.w, bottom: self.y + self.h }
+    }
+}
 
 struct Ui {
     hwnd: HWND,
     dpi: u32,
-    font: HFONT,
-    bold: HFONT,
     tab: Tab,
-    controls: Vec<(Option<Tab>, HWND)>,
-    /// Profile index for each row of the profile list.
-    rows: Vec<usize>,
-    /// Source URL for each row of the sources list.
-    source_urls: Vec<String>,
+    hits: Vec<(R, Act)>,
+    hover: Option<Act>,
+    pressed: Option<Act>,
+    dragging: Option<(Act, R)>,
+    tracking: bool,
+    search: HWND,
+    search_font: HFONT,
+    search_brush: HBRUSH,
+    search_rect: R,
+    query: String,
+    list_rect: R,
+    list_scroll: f32,
+    list_h: f32,
+    page_scroll: f32,
+    page_h: f32,
+    details: bool,
     learning: bool,
     learned: Option<(u32, u32, bool)>,
     learn_saw: bool,
-    colors: Vec<(i32, u32)>,
+    learn_msg: String,
+    learn_tone: u8, // 0 neutral, 1 good, 2 warn
+    icon: Option<IWICFormatConverter>,
+    pal: Pal,
 }
 
 thread_local! {
     static UI: RefCell<Option<Ui>> = const { RefCell::new(None) };
 }
 
-fn ui<R>(f: impl FnOnce(&mut Ui) -> R) -> Option<R> {
+fn ui<T>(f: impl FnOnce(&mut Ui) -> T) -> Option<T> {
     UI.with(|u| u.try_borrow_mut().ok().and_then(|mut u| u.as_mut().map(f)))
 }
 
-fn item(id: i32) -> HWND {
-    ui(|u| unsafe { GetDlgItem(Some(u.hwnd), id).unwrap_or_default() }).unwrap_or_default()
-}
-
-fn send(h: HWND, msg: u32, wp: usize, lp: isize) -> isize {
-    unsafe { SendMessageW(h, msg, Some(WPARAM(wp)), Some(LPARAM(lp))).0 }
-}
-
-fn set_text(h: HWND, s: &str) {
-    let ws = w(s);
-    unsafe {
-        let _ = SetWindowTextW(h, ws.pcwstr());
+fn repaint() {
+    if let Some(h) = ui(|u| u.hwnd) {
+        unsafe {
+            let _ = InvalidateRect(Some(h), None, false);
+        }
     }
 }
 
-fn get_text(h: HWND) -> String {
-    let mut buf = vec![0u16; 512];
-    unsafe {
-        let n = GetWindowTextW(h, &mut buf);
-        String::from_utf16_lossy(&buf[..n.max(0) as usize])
+fn scale() -> f32 {
+    ui(|u| u.dpi as f32 / 96.0).unwrap_or(1.0)
+}
+
+// ───────────────────────── data snapshot (taken per paint) ─────────────────────────
+
+struct RowInfo {
+    idx: usize,
+    name: String,
+    sub: String,
+    candidate: bool,
+    partial: bool,
+    user_file: bool,
+    active: bool,
+}
+
+struct Snap {
+    s: Settings,
+    headline: String,
+    report: String,
+    det_kind: MatchKind,
+    det_text: String,
+    active: Option<String>,
+    rows: Vec<RowInfo>,
+    errors: Vec<String>,
+    count: usize,
+    data_version: String,
+    update_status: String,
+    update_busy: bool,
+    sources: Vec<(String, String, String)>,
+    notes: String,
+}
+
+fn snapshot(query: &str) -> Option<Snap> {
+    let q = query.trim().to_lowercase();
+    app::with(|a| {
+        let det_kind = a.detection.kind;
+        let det_text = match det_kind {
+            MatchKind::Matched => format!("{} · {}", t("Detected automatically", "자동 감지됨"), a.detection.candidates[0].reason),
+            MatchKind::Ambiguous => {
+                let top = a.detection.candidates[0].score;
+                let names: Vec<&str> = a.detection.candidates.iter().filter(|c| c.score == top).map(|c| a.db.profiles[c.index].short_name()).collect();
+                format!("{} {}", t("Several models match — pick yours:", "여러 모델이 똑같이 맞아요. 직접 골라 주세요:"), names.join(", "))
+            }
+            MatchKind::Unknown => t("Not in the list yet — pick a model with the same keyboard below", "아직 목록에 없어요. 키보드가 같은 모델을 아래에서 골라 주세요").to_string(),
+        };
+        let cands: Vec<usize> = a.detection.candidates.iter().map(|c| c.index).collect();
+        let active_idx = a.active_index();
+        let mut idx: Vec<usize> = (0..a.db.profiles.len())
+            .filter(|&i| {
+                let p = &a.db.profiles[i];
+                q.is_empty() || format!("{} {} {} {} {}", p.vendor, p.series, p.name, p.match_rule.product.join(" "), p.match_rule.mtm.join(" ")).to_lowercase().contains(&q)
+            })
+            .collect();
+        idx.sort_by(|&x, &y| {
+            let (px, py) = (&a.db.profiles[x], &a.db.profiles[y]);
+            cands.contains(&y).cmp(&cands.contains(&x)).then_with(|| px.vendor.cmp(&py.vendor)).then_with(|| px.name.cmp(&py.name))
+        });
+        let rows = idx
+            .into_iter()
+            .map(|i| {
+                let p = &a.db.profiles[i];
+                let codes: Vec<String> = p.match_rule.product.iter().take(4).cloned().chain(p.match_rule.mtm.iter().take(4).map(|m| format!("MT {m}"))).collect();
+                let mut sub = p.vendor.clone();
+                if !p.years.is_empty() {
+                    sub += &format!("  ·  {}", p.years);
+                }
+                if !codes.is_empty() {
+                    sub += &format!("  ·  {}", codes.join(", "));
+                }
+                RowInfo { idx: i, name: p.short_name().to_string(), sub, candidate: cands.contains(&i), partial: p.verified == "partial", user_file: !p.is_builtin(), active: Some(i) == active_idx }
+            })
+            .collect();
+        let active = a.active();
+        let headline = match (det_kind, a.detection.best()) {
+            (MatchKind::Matched, Some(i)) => a.db.profiles[i].short_name().to_string(),
+            _ => a.device.short_label(),
+        };
+        Snap {
+            s: a.settings.clone(),
+            headline,
+            report: a.device.report(),
+            det_kind,
+            det_text,
+            active: active.map(|p| p.short_name().to_string()),
+            rows,
+            errors: a.db.errors.clone(),
+            count: a.db.profiles.len(),
+            data_version: a.db.data_version.clone(),
+            update_status: a.update_status.clone(),
+            update_busy: a.update_busy,
+            sources: active.map(|p| p.sources.iter().map(|s| (s.title.clone(), s.url.clone(), s.kind.clone())).collect()).unwrap_or_default(),
+            notes: active.map(|p| p.notes().to_string()).unwrap_or_default(),
+        }
+    })
+}
+
+// ───────────────────────── drawing context ─────────────────────────
+
+struct Dc<'a> {
+    rt: &'a ID2D1RenderTarget,
+    g: &'a Gfx,
+    brush: ID2D1SolidColorBrush,
+    p: Pal,
+    hits: Vec<(R, Act)>,
+    hover: Option<Act>,
+    pressed: Option<Act>,
+}
+
+impl Dc<'_> {
+    fn fill(&self, r: R, radius: f32, c: u32) {
+        unsafe {
+            self.brush.SetColor(&color(c));
+            let rr = D2D1_ROUNDED_RECT { rect: r.d2d(), radiusX: radius, radiusY: radius };
+            self.rt.FillRoundedRectangle(&rr, &self.brush);
+        }
+    }
+
+    fn stroke(&self, r: R, radius: f32, c: u32, width: f32) {
+        unsafe {
+            self.brush.SetColor(&color(c));
+            let h = width / 2.0;
+            let rr = D2D1_ROUNDED_RECT { rect: D2D_RECT_F { left: r.x + h, top: r.y + h, right: r.x + r.w - h, bottom: r.y + r.h - h }, radiusX: radius, radiusY: radius };
+            self.rt.DrawRoundedRectangle(&rr, &self.brush, width, None);
+        }
+    }
+
+    fn circle(&self, cx: f32, cy: f32, r: f32, c: u32) {
+        unsafe {
+            self.brush.SetColor(&color(c));
+            let e = D2D1_ELLIPSE { point: Vector2 { X: cx, Y: cy }, radiusX: r, radiusY: r };
+            self.rt.FillEllipse(&e, &self.brush);
+        }
+    }
+
+    fn line(&self, x0: f32, y0: f32, x1: f32, y1: f32, c: u32) {
+        unsafe {
+            self.brush.SetColor(&color(c));
+            let _ = self.rt.DrawLine(Vector2 { X: x0, Y: y0 }, Vector2 { X: x1, Y: y1 }, &self.brush, 1.0, None);
+        }
+    }
+
+    /// Draws text and returns its size. `max_w` wraps; `align` centers within max_w.
+    fn text(&self, s: &str, x: f32, y: f32, size: f32, bold: bool, c: u32, max_w: f32, wrap: bool, align: Align) -> (f32, f32) {
+        let Ok(tl) = dw_text(self.g, s, size, bold, FONT, max_w, align, wrap) else { return (0.0, 0.0) };
+        if !wrap {
+            // Single-line text never runs past its box: end it with "…".
+            unsafe {
+                use windows::Win32::Graphics::DirectWrite::{IDWriteTextFormat, DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER};
+                if let Ok(fmt) = tl.layout.cast::<IDWriteTextFormat>() {
+                    if let Ok(sign) = self.g.dw.CreateEllipsisTrimmingSign(&fmt) {
+                        let trim = DWRITE_TRIMMING { granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER, delimiter: 0, delimiterCount: 0 };
+                        let _ = tl.layout.SetTrimming(&trim, &sign);
+                    }
+                }
+            }
+        }
+        unsafe {
+            self.brush.SetColor(&color(c));
+            self.rt.DrawTextLayout(Vector2 { X: x, Y: y }, &tl.layout, &self.brush, D2D1_DRAW_TEXT_OPTIONS_NONE);
+        }
+        (tl.w, tl.h)
+    }
+
+    fn measure(&self, s: &str, size: f32, bold: bool, max_w: f32, wrap: bool) -> (f32, f32) {
+        dw_text(self.g, s, size, bold, FONT, max_w, Align::Left, wrap).map(|t| (t.w, t.h)).unwrap_or((0.0, 0.0))
+    }
+
+    fn glyph(&self, ch: char, x: f32, y: f32, size: f32, c: u32) {
+        if let Ok(tl) = dw_text(self.g, &ch.to_string(), size, false, ICONS, size * 2.0, Align::Left, false) {
+            unsafe {
+                self.brush.SetColor(&color(c));
+                self.rt.DrawTextLayout(Vector2 { X: x, Y: y }, &tl.layout, &self.brush, D2D1_DRAW_TEXT_OPTIONS_NONE);
+            }
+        }
+    }
+
+    fn hit(&mut self, r: R, a: Act) {
+        self.hits.push((r, a));
+    }
+
+    fn state(&self, a: Act) -> (bool, bool) {
+        (self.hover == Some(a), self.pressed == Some(a))
+    }
+
+    fn card(&self, r: R) {
+        self.fill(r, 8.0, self.p.card);
+        self.stroke(r, 8.0, self.p.card_border, 1.0);
+    }
+
+    /// Fluent button. kind: 0 = standard, 1 = accent, 2 = hyperlink. Returns width.
+    fn button(&mut self, x: f32, y: f32, label: &str, glyph: Option<char>, a: Act, kind: u8, enabled: bool) -> f32 {
+        let (tw, _) = self.measure(label, 13.5, kind == 1, 600.0, false);
+        let gw = if glyph.is_some() { 22.0 } else { 0.0 };
+        let w = (tw + gw + 28.0).max(if kind == 2 { 0.0 } else { 96.0 });
+        let r = R::new(x, y, w, 34.0);
+        let (hov, prs) = self.state(a);
+        let p = self.p;
+        let (fg, alpha) = match kind {
+            1 => {
+                let base = if !enabled { p.track_off } else { p.accent };
+                self.fill(r, 5.0, base);
+                if enabled && (hov || prs) {
+                    self.fill(r, 5.0, if prs { 0x33000000 } else if p.dark { 0x1A000000 } else { 0x1AFFFFFF });
+                }
+                (p.on_accent, 1.0)
+            }
+            2 => {
+                if hov || prs {
+                    self.fill(r, 5.0, if prs { p.pressed } else { p.hover });
+                }
+                (p.accent, 1.0)
+            }
+            _ => {
+                self.fill(r, 5.0, p.control);
+                self.stroke(r, 5.0, p.control_border, 1.0);
+                if enabled && (hov || prs) {
+                    self.fill(r, 5.0, if prs { p.pressed } else { p.hover });
+                }
+                (p.text, if enabled { 1.0 } else { 0.45 })
+            }
+        };
+        let fg = if alpha < 1.0 { (fg & 0x00FFFFFF) | (((alpha * 255.0) as u32) << 24) } else { fg };
+        let mut tx = x + (w - tw - gw) / 2.0;
+        if let Some(g) = glyph {
+            self.glyph(g, tx, y + 9.0, 14.0, fg);
+            tx += gw;
+        }
+        self.text(label, tx, y + 7.5, 13.5, kind == 1, fg, 600.0, false, Align::Left);
+        if enabled {
+            self.hit(r, a);
+        }
+        w
+    }
+
+    /// Windows 11 toggle switch, 40×20, at its right edge `right`.
+    fn toggle(&mut self, right: f32, cy: f32, on: bool, a: Act) {
+        let p = self.p;
+        let (hov, _) = self.state(a);
+        let label = if on { t("On", "켬") } else { t("Off", "끔") };
+        let (lw, _) = self.measure(label, 13.5, false, 100.0, false);
+        let r = R::new(right - 40.0, cy - 10.0, 40.0, 20.0);
+        if on {
+            self.fill(r, 10.0, p.accent);
+            self.circle(r.x + 30.0, cy, if hov { 7.0 } else { 6.0 }, p.on_accent);
+        } else {
+            self.fill(r, 10.0, if hov { p.hover } else { 0x00000000 });
+            self.stroke(r, 10.0, p.track_off, 1.0);
+            self.circle(r.x + 10.0, cy, if hov { 6.0 } else { 5.0 }, p.track_off);
+        }
+        self.text(label, r.x - lw - 12.0, cy - 9.5, 13.5, false, p.text, 100.0, false, Align::Left);
+        self.hit(R::new(r.x - lw - 16.0, cy - 16.0, lw + 60.0, 32.0), a);
+    }
+
+    /// Segmented control ending at `right`. Returns its rect.
+    fn segmented(&mut self, right: f32, cy: f32, items: &[(&str, Act, bool)]) -> R {
+        let p = self.p;
+        let widths: Vec<f32> = items.iter().map(|(l, _, _)| self.measure(l, 13.0, false, 400.0, false).0 + 24.0).collect();
+        let total: f32 = widths.iter().sum::<f32>() + 4.0;
+        let r = R::new(right - total, cy - 16.0, total, 32.0);
+        self.fill(r, 6.0, p.control);
+        self.stroke(r, 6.0, p.control_border, 1.0);
+        let mut x = r.x + 2.0;
+        for ((label, a, sel), w) in items.iter().zip(widths) {
+            let seg = R::new(x, r.y + 2.0, w, 28.0);
+            let (hov, _) = self.state(*a);
+            if *sel {
+                self.fill(seg, 4.0, p.accent);
+            } else if hov {
+                self.fill(seg, 4.0, p.hover);
+            }
+            self.text(label, x, r.y + 7.0, 13.0, *sel, if *sel { p.on_accent } else { p.text }, w, false, Align::Center);
+            self.hit(seg, *a);
+            x += w;
+        }
+        r
+    }
+
+    /// Slider with a value label on its right. `frac` in 0..1. Returns the track rect (for dragging).
+    fn slider(&mut self, x: f32, cy: f32, w: f32, frac: f32, label: &str, a: Act) -> R {
+        let p = self.p;
+        let track = R::new(x, cy - 2.0, w, 4.0);
+        self.fill(track, 2.0, p.track_off & 0x80FFFFFF);
+        self.fill(R::new(x, cy - 2.0, w * frac, 4.0), 2.0, p.accent);
+        let tx = x + w * frac;
+        let (hov, prs) = self.state(a);
+        self.circle(tx, cy, 10.0, p.control);
+        self.circle(tx, cy, 10.5, p.control_border & 0x60FFFFFF);
+        self.circle(tx, cy, 9.5, p.control);
+        self.circle(tx, cy, if prs { 4.0 } else if hov { 6.0 } else { 5.0 }, p.accent);
+        self.text(label, x + w + 14.0, cy - 9.5, 13.5, false, p.text, 120.0, false, Align::Left);
+        let hit = R::new(x - 10.0, cy - 14.0, w + 20.0, 28.0);
+        self.hit(hit, a);
+        R::new(x, cy - 14.0, w, 28.0)
+    }
+
+    /// A settings row inside a card: title + optional description on the left. Returns row height.
+    fn row_text(&self, x: f32, y: f32, w: f32, title: &str, desc: &str) -> f32 {
+        let (_, th) = self.text(title, x, y, 14.0, false, self.p.text, w, true, Align::Left);
+        let mut h = th;
+        if !desc.is_empty() {
+            let (_, dh) = self.text(desc, x, y + th + 2.0, 12.0, false, self.p.sub, w, true, Align::Left);
+            h += dh + 2.0;
+        }
+        h
     }
 }
 
-fn checked(id: i32) -> bool {
-    send(item(id), BM_GETCHECK, 0, 0) == BST_CHECKED.0 as isize
+// ───────────────────────── pages ─────────────────────────
+
+const G_LAPTOP: char = '\u{E7F8}';
+const G_KEYBOARD: char = '\u{E765}';
+const G_INFO: char = '\u{E946}';
+const G_COPY: char = '\u{E8C8}';
+const G_LINK: char = '\u{E8A7}';
+const G_FOLDER: char = '\u{E8B7}';
+const G_REFRESH: char = '\u{E72C}';
+const G_SEARCH: char = '\u{E721}';
+const G_VIEW: char = '\u{E7B3}';
+const G_CHECK: char = '\u{E73E}';
+const G_WARN: char = '\u{E7BA}';
+const G_DOWN: char = '\u{E70D}';
+const G_UP: char = '\u{E70E}';
+const G_SYNC: char = '\u{E895}';
+const G_SHIELD: char = '\u{EA18}';
+
+fn badge(dc: &Dc, x: f32, y: f32, label: &str, fg: u32, bg: u32) -> f32 {
+    let (tw, _) = dc.measure(label, 11.0, true, 200.0, false);
+    let r = R::new(x, y, tw + 12.0, 18.0);
+    dc.fill(r, 9.0, bg);
+    dc.text(label, x + 6.0, y + 1.5, 11.0, true, fg, 200.0, false, Align::Left);
+    r.w
 }
 
-fn set_checked(id: i32, on: bool) {
-    send(item(id), BM_SETCHECK, if on { BST_CHECKED.0 as usize } else { 0 }, 0);
-}
-
-fn set_color(id: i32, c: u32) {
-    ui(|u| {
-        u.colors.retain(|(i, _)| *i != id);
-        u.colors.push((id, c));
-    });
-    unsafe {
-        let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(item(id)), None, true);
+fn sidebar(dc: &mut Dc, tab: Tab, icon: Option<&ID2D1Bitmap>) {
+    let p = dc.p;
+    if let Some(bmp) = icon {
+        unsafe {
+            dc.rt.DrawBitmap(bmp, Some(&R::new(24.0, 22.0, 36.0, 36.0).d2d()), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+        }
+    }
+    dc.text("Fn Cheatsheet", 70.0, 22.0, 15.0, true, p.text, 160.0, false, Align::Left);
+    dc.text(&format!("v{APP_VERSION}"), 70.0, 42.0, 12.0, false, p.sub, 160.0, false, Align::Left);
+    let items = [
+        (Tab::Device, G_LAPTOP, t("Device", "기기")),
+        (Tab::Trigger, G_KEYBOARD, t("Trigger & display", "누르기·표시")),
+        (Tab::About, G_INFO, t("Updates & about", "업데이트·정보")),
+    ];
+    let mut y = 86.0;
+    for (tb, g, label) in items {
+        let r = R::new(12.0, y, SIDEBAR - 24.0, 38.0);
+        let a = Act::Nav(tb);
+        let (hov, prs) = dc.state(a);
+        if tb == tab {
+            dc.fill(r, 5.0, if p.dark { 0x0FFFFFFF } else { 0x0A000000 });
+            dc.fill(R::new(r.x, r.y + 11.0, 3.0, 16.0), 1.5, p.accent);
+        } else if hov || prs {
+            dc.fill(r, 5.0, if prs { p.pressed } else { p.hover });
+        }
+        dc.glyph(g, r.x + 16.0, r.y + 11.0, 16.0, p.text);
+        dc.text(label, r.x + 46.0, r.y + 9.0, 14.0, false, p.text, r.w - 50.0, false, Align::Left);
+        dc.hit(r, a);
+        y += 42.0;
     }
 }
 
-// ───────────────────────── open / build ─────────────────────────
+fn page_title(dc: &Dc, x: f32, y: f32, s: &str) -> f32 {
+    dc.text(s, x, y, 26.0, true, dc.p.text, 600.0, false, Align::Left).1
+}
+
+/// Device page. Returns the search box rect (for the native EDIT) and list rect.
+fn page_device(dc: &mut Dc, s: &Snap, u: &UiView, x0: f32, cw: f32, h: f32) -> (R, R, f32) {
+    let p = dc.p;
+    let mut y = 28.0;
+    y += page_title(dc, x0, y, t("Device", "기기")) + 18.0;
+
+    // Hero card: this PC + detection
+    let det_good = s.det_kind == MatchKind::Matched;
+    let report_lines = s.report.lines().count() as f32;
+    let hero_h = 112.0 + if u.details { report_lines * 18.0 + 14.0 } else { 0.0 };
+    let hero = R::new(x0, y, cw, hero_h);
+    dc.card(hero);
+    dc.circle(x0 + 44.0, y + 44.0, 24.0, p.accent_soft);
+    dc.glyph(G_LAPTOP, x0 + 32.0, y + 32.0, 24.0, p.accent);
+    dc.text(t("This PC", "이 PC"), x0 + 82.0, y + 16.0, 12.0, false, p.sub, cw - 100.0, false, Align::Left);
+    dc.text(&s.headline, x0 + 82.0, y + 32.0, 18.0, true, p.text, cw - 100.0, false, Align::Left);
+    let (tone, g) = if det_good { (p.good, G_CHECK) } else { (p.warn, G_WARN) };
+    dc.glyph(g, x0 + 82.0, y + 63.0, 13.0, tone);
+    dc.text(&s.det_text, x0 + 102.0, y + 60.0, 13.0, false, tone, cw - 130.0, false, Align::Left);
+    let by = y + 90.0 - 4.0;
+    let _ = by;
+    // buttons on the right of the headline
+    let bw = dc.measure(t("Request this model", "이 모델 추가 요청"), 13.5, false, 600.0, false).0 + 50.0;
+    let cw2 = dc.measure(t("Copy info", "정보 복사"), 13.5, false, 600.0, false).0 + 50.0;
+    let bx = x0 + cw - 16.0 - bw;
+    dc.button(bx, y + 18.0, t("Request this model", "이 모델 추가 요청"), Some(G_LINK), Act::Request, 0, true);
+    dc.button(bx - 8.0 - cw2.max(96.0), y + 18.0, t("Copy info", "정보 복사"), Some(G_COPY), Act::CopyInfo, 0, true);
+    // details toggle
+    let dl = if u.details { t("Hide details", "세부 정보 숨기기") } else { t("Show details", "세부 정보 보기") };
+    let (dw, _) = dc.measure(dl, 12.5, false, 300.0, false);
+    let dr = R::new(x0 + 76.0, y + 82.0, dw + 30.0, 24.0);
+    let (hov, _) = dc.state(Act::Details);
+    if hov {
+        dc.fill(dr, 4.0, p.hover);
+    }
+    dc.text(dl, dr.x + 6.0, dr.y + 3.5, 12.5, false, p.accent, 300.0, false, Align::Left);
+    dc.glyph(if u.details { G_UP } else { G_DOWN }, dr.x + dw + 12.0, dr.y + 7.0, 10.0, p.accent);
+    dc.hit(dr, Act::Details);
+    if u.details {
+        let mut ly = y + 112.0;
+        dc.line(x0 + 16.0, ly - 4.0, x0 + cw - 16.0, ly - 4.0, p.divider);
+        for l in s.report.lines() {
+            dc.text(l, x0 + 82.0, ly + 2.0, 12.0, false, p.sub, cw - 100.0, false, Align::Left);
+            ly += 18.0;
+        }
+    }
+    y += hero_h + 14.0;
+
+    // Model card
+    let bottom_bar = 50.0;
+    let card = R::new(x0, y, cw, (h - y - 20.0 - bottom_bar).max(160.0));
+    dc.card(card);
+    dc.text(t("Model to show", "보여 줄 모델"), x0 + 20.0, y + 16.0, 14.0, true, p.text, cw - 300.0, false, Align::Left);
+    let in_use = match &s.active {
+        Some(n) => format!("{} {}", t("In use:", "사용 중:"), n),
+        None => t("None selected — the sheet will ask you to pick one", "선택 안 됨 — 화면에 모델을 고르라는 안내가 나와요").to_string(),
+    };
+    dc.text(&in_use, x0 + 20.0, y + 38.0, 12.5, false, if s.active.is_some() { p.good } else { p.warn }, cw - 300.0, false, Align::Left);
+    let auto_ok = det_good;
+    let manual = s.s.profile_mode == "manual" || !auto_ok;
+    dc.segmented(
+        x0 + cw - 20.0,
+        y + 32.0,
+        &[(t("Automatic", "자동 감지"), Act::ModeAuto, !manual), (t("Choose myself", "직접 선택"), Act::ModeManual, manual)],
+    );
+    if !auto_ok {
+        // automatic isn't available for this PC: remove its hit target
+        dc.hits.retain(|(_, a)| *a != Act::ModeAuto);
+    }
+    // search box (native EDIT sits inside)
+    let sr = R::new(x0 + 20.0, y + 66.0, cw - 40.0, 34.0);
+    dc.fill(sr, 5.0, p.control);
+    dc.stroke(sr, 5.0, p.control_border, 1.0);
+    dc.fill(R::new(sr.x + 1.0, sr.y + sr.h - 2.0, sr.w - 2.0, 1.0), 0.0, p.track_off & 0x60FFFFFF);
+    dc.glyph(G_SEARCH, sr.x + sr.w - 30.0, sr.y + 10.0, 14.0, p.sub);
+    // list
+    let lr = R::new(x0 + 8.0, y + 110.0, cw - 16.0, card.h - 118.0);
+    let row_h = 54.0;
+    let list_h = s.rows.len() as f32 * row_h;
+    unsafe {
+        dc.rt.PushAxisAlignedClip(&lr.d2d(), D2D1_ANTIALIAS_MODE_ALIASED);
+    }
+    let first = (u.list_scroll / row_h).floor().max(0.0) as usize;
+    let mut ry = lr.y - (u.list_scroll - first as f32 * row_h);
+    for row in s.rows.iter().skip(first) {
+        if ry > lr.y + lr.h {
+            break;
+        }
+        let rr = R::new(lr.x, ry, lr.w - 10.0, row_h - 4.0);
+        let a = Act::Row(row.idx);
+        let (hov, prs) = dc.state(a);
+        if row.active {
+            dc.fill(rr, 5.0, p.accent_soft);
+            dc.fill(R::new(rr.x, rr.y + 15.0, 3.0, 20.0), 1.5, p.accent);
+        } else if hov || prs {
+            dc.fill(rr, 5.0, if prs { p.pressed } else { p.hover });
+        }
+        let (nw, _) = dc.text(&row.name, rr.x + 16.0, rr.y + 6.0, 14.0, row.active, p.text, rr.w - 200.0, false, Align::Left);
+        let mut bx = rr.x + 16.0 + nw + 8.0;
+        if row.candidate {
+            bx += badge(dc, bx, rr.y + 8.0, t("This PC", "이 PC"), p.on_accent, p.accent) + 6.0;
+        }
+        if row.partial {
+            bx += badge(dc, bx, rr.y + 8.0, t("Partly verified", "일부 확인"), if p.dark { 0xFF000000 } else { 0xFFFFFFFF }, p.warn) + 6.0;
+        }
+        if row.user_file {
+            badge(dc, bx, rr.y + 8.0, t("My file", "내 파일"), p.text, p.hover | 0x20000000);
+        }
+        dc.text(&row.sub, rr.x + 16.0, rr.y + 27.0, 12.0, false, p.sub, rr.w - 30.0, false, Align::Left);
+        if rr.y + rr.h > lr.y && rr.y < lr.y + lr.h {
+            let vis = R::new(rr.x, rr.y.max(lr.y), rr.w, (rr.y + rr.h).min(lr.y + lr.h) - rr.y.max(lr.y));
+            dc.hit(vis, a);
+        }
+        ry += row_h;
+    }
+    if s.rows.is_empty() {
+        dc.text(t("No matching model.", "맞는 모델이 없어요."), lr.x + 16.0, lr.y + 12.0, 13.0, false, p.sub, lr.w, false, Align::Left);
+    }
+    unsafe {
+        dc.rt.PopAxisAlignedClip();
+    }
+    // scrollbar
+    if list_h > lr.h {
+        let th = (lr.h * lr.h / list_h).max(30.0);
+        let ty = lr.y + (lr.h - th) * (u.list_scroll / (list_h - lr.h)).clamp(0.0, 1.0);
+        dc.fill(R::new(lr.x + lr.w - 5.0, ty, 3.0, th), 1.5, p.track_off & 0x99FFFFFF);
+    }
+
+    // bottom bar
+    let yb = card.y + card.h + 12.0;
+    let mut bx = x0 + cw;
+    let pw = dc.measure(t("Preview", "미리 보기"), 13.5, true, 600.0, false).0 + 50.0;
+    bx -= pw.max(96.0);
+    dc.button(bx, yb, t("Preview", "미리 보기"), Some(G_VIEW), Act::Preview, 1, true);
+    let rw = dc.measure(t("Reload", "다시 불러오기"), 13.5, false, 600.0, false).0 + 50.0;
+    bx -= rw.max(96.0) + 8.0;
+    dc.button(bx, yb, t("Reload", "다시 불러오기"), Some(G_REFRESH), Act::Reload, 0, true);
+    let fw = dc.measure(t("My profiles folder", "내 프로필 폴더"), 13.5, false, 600.0, false).0 + 50.0;
+    bx -= fw.max(96.0) + 8.0;
+    dc.button(bx, yb, t("My profiles folder", "내 프로필 폴더"), Some(G_FOLDER), Act::Folder, 0, true);
+    if !s.errors.is_empty() {
+        dc.text(&format!("{} {}", t("Some profile files failed to load:", "불러오지 못한 프로필:"), s.errors.join("; ")), x0, yb + 8.0, 12.0, false, p.warn, bx - x0 - 12.0, false, Align::Left);
+    }
+    (sr, lr, list_h)
+}
+
+struct UiView {
+    query: String,
+    list_scroll: f32,
+    details: bool,
+    learn_msg: String,
+    learn_tone: u8,
+    learn_ready: bool,
+    learning: bool,
+}
+
+/// Settings-card row helper: draws the divider and returns the y of the next row.
+fn divider(dc: &Dc, x0: f32, cw: f32, y: f32) {
+    dc.line(x0 + 1.0, y, x0 + cw - 1.0, y, dc.p.divider);
+}
+
+fn page_trigger(dc: &mut Dc, s: &Snap, u: &UiView, x0: f32, cw: f32, y0: f32) -> (f32, Vec<(Act, R)>) {
+    let p = dc.p;
+    let mut sliders = Vec::new();
+    let mut y = y0 + 28.0;
+    y += page_title(dc, x0, y, t("Trigger & display", "누르기·표시")) + 18.0;
+    let text_w = cw - 330.0;
+
+    // Card 1: hold to show
+    let info = t(
+        "The Fn key is handled inside the keyboard controller on almost every ASUS and Lenovo laptop, so Windows never sees it. Hold the key right next to it instead.",
+        "ASUS·레노버 노트북 대부분은 Fn 키를 키보드 안에서 처리해서 Windows가 알 수 없어요. 그래서 바로 옆의 키를 길게 눌러요.",
+    );
+    let (_, ih) = dc.measure(info, 12.5, false, cw - 40.0, true);
+    let rows = 4.0;
+    let c1 = R::new(x0, y, cw, 20.0 + ih + 16.0 + rows * 68.0);
+    dc.card(c1);
+    dc.glyph(G_INFO, x0 + 20.0, y + 21.0, 13.0, p.sub);
+    dc.text(info, x0 + 42.0, y + 18.0, 12.5, false, p.sub, cw - 62.0, true, Align::Left);
+    let mut ry = y + 20.0 + ih + 16.0;
+    // row: enabled
+    divider(dc, x0, cw, ry);
+    dc.row_text(x0 + 20.0, ry + 14.0, text_w, t("Show the sheet while I hold the key", "키를 길게 누르면 치트시트 보기"), t("Releasing it hides the sheet", "손을 떼면 사라져요"));
+    dc.toggle(x0 + cw - 20.0, ry + 34.0, s.s.trigger_enabled, Act::TriggerEnabled);
+    ry += 68.0;
+    // row: key
+    divider(dc, x0, cw, ry);
+    dc.row_text(x0 + 20.0, ry + 14.0, cw - 380.0, t("Key", "누를 키"), t("Left Ctrl sits right next to Fn", "왼쪽 Ctrl은 Fn 바로 옆에 있어요"));
+    let presets = [(VK_LCONTROL, t("Left Ctrl", "왼쪽 Ctrl")), (VK_ANY_CTRL, t("Either Ctrl", "양쪽 Ctrl")), (VK_RSHIFT, t("Right Shift", "오른쪽 Shift")), (VK_APPS, t("Menu", "메뉴 키"))];
+    let custom = s.s.trigger_scan != 0 || !presets.iter().any(|(vk, _)| *vk == s.s.trigger_vk);
+    let mut items: Vec<(&str, Act, bool)> = presets.iter().map(|(vk, l)| (*l, Act::Key(*vk), !custom && *vk == s.s.trigger_vk)).collect();
+    if custom {
+        items.push((t("Captured key", "직접 등록한 키"), Act::Key(0), true));
+    }
+    dc.segmented(x0 + cw - 20.0, ry + 34.0, &items);
+    ry += 68.0;
+    // row: hold time
+    divider(dc, x0, cw, ry);
+    dc.row_text(x0 + 20.0, ry + 14.0, text_w, t("Hold for", "누르고 있을 시간"), t("Shorter shows faster; longer avoids surprises", "짧을수록 빨리 뜨고, 길수록 실수로 뜨지 않아요"));
+    let frac = (s.s.hold_ms as f32 - 300.0) / 1700.0;
+    let tr = dc.slider(x0 + cw - 250.0, ry + 34.0, 170.0, frac.clamp(0.0, 1.0), &format!("{:.1}{}", s.s.hold_ms as f32 / 1000.0, t(" s", "초")), Act::HoldSlider);
+    sliders.push((Act::HoldSlider, tr));
+    ry += 68.0;
+    // row: full screen
+    divider(dc, x0, cw, ry);
+    dc.row_text(x0 + 20.0, ry + 14.0, text_w, t("Not over full-screen apps and games", "전체 화면 앱·게임 위에는 띄우지 않기"), t("Holding Ctrl to crouch won't cover the game", "게임에서 Ctrl(앉기)을 오래 눌러도 가리지 않아요"));
+    dc.toggle(x0 + cw - 20.0, ry + 34.0, s.s.skip_fullscreen, Act::SkipFs);
+    y = c1.y + c1.h + 14.0;
+
+    // Card 2: capture
+    let (_, mh) = if u.learn_msg.is_empty() { (0.0, 0.0) } else { dc.measure(&u.learn_msg, 13.0, true, cw - 40.0, true) };
+    let c2 = R::new(x0, y, cw, 118.0 + if mh > 0.0 { mh + 12.0 } else { 0.0 });
+    dc.card(c2);
+    dc.text(t("Does my Fn key send anything?", "내 Fn 키가 신호를 보내나요?"), x0 + 20.0, y + 16.0, 14.0, true, p.text, cw - 40.0, false, Align::Left);
+    dc.text(t("Press Start, then hold Fn alone for two seconds. If anything arrives you can use it as the key.", "시작을 누르고 Fn 키만 2초 동안 눌러 보세요. 신호가 오면 그 키를 누를 키로 쓸 수 있어요."), x0 + 20.0, y + 38.0, 12.5, false, p.sub, cw - 40.0, true, Align::Left);
+    let bx = x0 + 20.0;
+    let w1 = dc.button(bx, y + 70.0, if u.learning { t("Listening…", "듣는 중…") } else { t("Start", "시작") }, Some(G_KEYBOARD), Act::LearnStart, 1, !u.learning);
+    dc.button(bx + w1 + 8.0, y + 70.0, t("Use this key", "이 키로 쓰기"), None, Act::LearnUse, 0, u.learn_ready);
+    if mh > 0.0 {
+        let tone = match u.learn_tone {
+            1 => p.good,
+            2 => p.warn,
+            _ => p.text,
+        };
+        dc.text(&u.learn_msg, x0 + 20.0, y + 114.0, 13.0, true, tone, cw - 40.0, true, Align::Left);
+    }
+    y = c2.y + c2.h + 14.0;
+
+    // Card 3: general
+    let c3 = R::new(x0, y, cw, 4.0 * 68.0 + 50.0);
+    dc.card(c3);
+    dc.text(t("General", "일반"), x0 + 20.0, y + 16.0, 14.0, true, p.text, cw - 40.0, false, Align::Left);
+    let mut ry = y + 50.0;
+    divider(dc, x0, cw, ry);
+    dc.row_text(x0 + 20.0, ry + 14.0, text_w, t("Start with Windows", "Windows 시작 시 실행"), t("Stays in the tray, uses a few MB", "트레이에 머물고 메모리는 몇 MB만 써요"));
+    dc.toggle(x0 + cw - 20.0, ry + 34.0, startup::is_enabled(), Act::Startup);
+    ry += 68.0;
+    divider(dc, x0, cw, ry);
+    dc.row_text(x0 + 20.0, ry + 14.0, cw - 360.0, t("Language", "언어"), "");
+    let lang = s.s.language.as_str();
+    dc.segmented(x0 + cw - 20.0, ry + 34.0, &[(t("Windows", "Windows 따라"), Act::Lang(0), lang == "auto"), ("한국어", Act::Lang(1), lang == "ko"), ("English", Act::Lang(2), lang == "en")]);
+    ry += 68.0;
+    divider(dc, x0, cw, ry);
+    dc.row_text(x0 + 20.0, ry + 14.0, cw - 360.0, t("Theme", "테마"), t("For the sheet and this window", "치트시트와 이 창에 적용돼요"));
+    let th = s.s.theme.as_str();
+    dc.segmented(x0 + cw - 20.0, ry + 34.0, &[(t("Windows", "Windows 따라"), Act::Theme(0), th == "auto"), (t("Dark", "어둡게"), Act::Theme(1), th == "dark"), (t("Light", "밝게"), Act::Theme(2), th == "light")]);
+    ry += 68.0;
+    divider(dc, x0, cw, ry);
+    dc.row_text(x0 + 20.0, ry + 14.0, cw - 470.0, t("Sheet size", "치트시트 크기"), "");
+    let frac = (s.s.overlay_scale - 0.7) / 0.9;
+    let tr = dc.slider(x0 + cw - 380.0, ry + 34.0, 170.0, frac.clamp(0.0, 1.0), &format!("{}%", (s.s.overlay_scale * 100.0).round()), Act::ScaleSlider);
+    sliders.push((Act::ScaleSlider, tr));
+    dc.button(x0 + cw - 20.0 - 116.0, ry + 17.0, t("Preview", "미리 보기"), Some(G_VIEW), Act::Preview, 0, true);
+    y = c3.y + c3.h + 28.0;
+    (y - y0, sliders)
+}
+
+fn page_about(dc: &mut Dc, s: &Snap, x0: f32, cw: f32, y0: f32, icon: Option<&ID2D1Bitmap>) -> f32 {
+    let p = dc.p;
+    let mut y = y0 + 28.0;
+    // hero
+    if let Some(bmp) = icon {
+        unsafe {
+            dc.rt.DrawBitmap(bmp, Some(&R::new(x0, y, 64.0, 64.0).d2d()), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+        }
+    }
+    dc.text("Fn Cheatsheet", x0 + 80.0, y + 2.0, 24.0, true, p.text, cw - 80.0, false, Align::Left);
+    dc.text(
+        &format!("{} {}  ·  {} {} · {}", t("Version", "버전"), APP_VERSION, s.count, t("models", "개 모델"), s.data_version),
+        x0 + 80.0,
+        y + 36.0,
+        12.5,
+        false,
+        p.sub,
+        cw - 80.0,
+        false,
+        Align::Left,
+    );
+    y += 84.0;
+
+    // Updates
+    let c1 = R::new(x0, y, cw, 50.0 + 2.0 * 68.0);
+    dc.card(c1);
+    dc.glyph(G_SYNC, x0 + 20.0, y + 18.0, 14.0, p.text);
+    dc.text(t("Updates", "업데이트"), x0 + 44.0, y + 15.0, 14.0, true, p.text, cw - 60.0, false, Align::Left);
+    let mut ry = y + 50.0;
+    divider(dc, x0, cw, ry);
+    dc.row_text(x0 + 20.0, ry + 14.0, cw - 200.0, t("Update automatically", "자동 업데이트"), t("Checks GitHub once a day; verified before installing", "하루 한 번 GitHub를 확인하고, 검증한 뒤 설치해요"));
+    dc.toggle(x0 + cw - 20.0, ry + 34.0, s.s.auto_update, Act::AutoUpdate);
+    ry += 68.0;
+    divider(dc, x0, cw, ry);
+    let status = if s.update_status.is_empty() { t("Not checked yet in this session", "이번 실행에서는 아직 확인하지 않았어요").to_string() } else { s.update_status.clone() };
+    dc.row_text(x0 + 20.0, ry + 14.0, cw - 220.0, t("Status", "상태"), &status);
+    let label = if s.update_busy { t("Checking…", "확인 중…") } else { t("Check now", "지금 확인") };
+    let lw = dc.measure(label, 13.5, false, 600.0, false).0 + 50.0;
+    dc.button(x0 + cw - 20.0 - lw.max(96.0), ry + 17.0, label, Some(G_SYNC), Act::CheckNow, 0, !s.update_busy);
+    y = c1.y + c1.h + 14.0;
+
+    // Privacy
+    let ptxt = t(
+        "Network is used only for the update check (api.github.com, github.com). Only your PC's model strings are read — no serial numbers. The keyboard hook only checks whether the trigger key is held alone and never records what you type. Never runs as administrator.",
+        "네트워크는 업데이트 확인(api.github.com, github.com)에만 써요. PC 모델 문자열만 읽고 일련번호는 읽지 않아요. 키보드 후킹은 트리거 키를 혼자 누르고 있는지만 보고, 입력 내용은 기록하지 않아요. 관리자 권한으로 실행하지 않아요.",
+    );
+    let (_, ph) = dc.measure(ptxt, 12.5, false, cw - 40.0, true);
+    let c2 = R::new(x0, y, cw, 50.0 + ph + 16.0);
+    dc.card(c2);
+    dc.glyph(G_SHIELD, x0 + 20.0, y + 18.0, 14.0, p.text);
+    dc.text(t("Privacy", "개인정보"), x0 + 44.0, y + 15.0, 14.0, true, p.text, cw - 60.0, false, Align::Left);
+    dc.text(ptxt, x0 + 20.0, y + 44.0, 12.5, false, p.sub, cw - 40.0, true, Align::Left);
+    y = c2.y + c2.h + 14.0;
+
+    // Sources
+    let notes_h = if s.notes.is_empty() { 0.0 } else { dc.measure(&s.notes, 12.0, false, cw - 40.0, true).1 + 12.0 };
+    let n = s.sources.len().max(1) as f32;
+    let c3 = R::new(x0, y, cw, 50.0 + n * 36.0 + notes_h + 10.0);
+    dc.card(c3);
+    dc.text(t("Sources for the model in use", "사용 중인 모델의 출처"), x0 + 20.0, y + 15.0, 14.0, true, p.text, cw - 40.0, false, Align::Left);
+    let mut ry = y + 46.0;
+    if s.sources.is_empty() {
+        dc.text(t("No model selected.", "선택된 모델이 없어요."), x0 + 20.0, ry + 6.0, 13.0, false, p.sub, cw - 40.0, false, Align::Left);
+        ry += 36.0;
+    }
+    unsafe {
+        dc.rt.PushAxisAlignedClip(&R::new(x0 + 1.0, y, cw - 2.0, c3.h).d2d(), D2D1_ANTIALIAS_MODE_ALIASED);
+    }
+    for (i, (title, url, kind)) in s.sources.iter().enumerate() {
+        let r = R::new(x0 + 10.0, ry, cw - 20.0, 32.0);
+        let a = Act::Source(i);
+        let (hov, _) = dc.state(a);
+        if hov {
+            dc.fill(r, 4.0, p.hover);
+        }
+        dc.glyph(G_LINK, r.x + 10.0, r.y + 9.0, 13.0, p.accent);
+        let label = format!("{}{}", if title.is_empty() { url } else { title }, match kind.as_str() { "community" => t("  (community)", "  (커뮤니티)"), "device-test" => t("  (tested on a real device)", "  (실기 확인)"), _ => "" });
+        dc.text(&label, r.x + 34.0, r.y + 6.5, 13.0, false, p.accent, r.w - 44.0, false, Align::Left);
+        dc.hit(r, a);
+        ry += 36.0;
+    }
+    unsafe {
+        dc.rt.PopAxisAlignedClip();
+    }
+    if !s.notes.is_empty() {
+        dc.text(&s.notes, x0 + 20.0, ry + 4.0, 12.0, false, p.sub, cw - 40.0, true, Align::Left);
+    }
+    y = c3.y + c3.h + 14.0;
+
+    // Links
+    let mut bx = x0;
+    bx += dc.button(bx, y, t("Website & model list", "소개 페이지·모델 목록"), Some(G_LINK), Act::Site, 2, true) + 4.0;
+    bx += dc.button(bx, y, "GitHub", Some(G_LINK), Act::Github, 2, true) + 4.0;
+    dc.button(bx, y, t("Report a problem", "문제 신고"), Some(G_LINK), Act::Issues, 2, true);
+    y += 44.0;
+    dc.text(t("MIT License · © 2026 jeiel85 · Not affiliated with ASUS or Lenovo.", "MIT License · © 2026 jeiel85 · ASUS·Lenovo와 관계없는 비공식 프로젝트예요."), x0, y, 12.0, false, p.sub, cw, false, Align::Left);
+    y + 40.0 - y0
+}
+
+// ───────────────────────── paint ─────────────────────────
+
+fn icon_source(px: i32) -> Option<IWICFormatConverter> {
+    unsafe {
+        let hinst = GetModuleHandleW(None).ok()?;
+        let h = LoadImageW(Some(hinst.into()), PCWSTR(1 as _), IMAGE_ICON, px, px, LR_DEFAULTCOLOR).ok()?;
+        let hicon = HICON(h.0);
+        let wic: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
+        let bmp = wic.CreateBitmapFromHICON(hicon).ok();
+        let _ = DestroyIcon(hicon);
+        let conv = wic.CreateFormatConverter().ok()?;
+        conv.Initialize(&bmp?, &GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, None, 0.0, WICBitmapPaletteTypeMedianCut).ok()?;
+        Some(conv)
+    }
+}
+
+fn paint(hwnd: HWND) {
+    unsafe {
+        let mut ps = PAINTSTRUCT::default();
+        let hdc = BeginPaint(hwnd, &mut ps);
+        let mut rc = RECT::default();
+        let _ = GetClientRect(hwnd, &mut rc);
+        let (pw, ph) = (rc.right - rc.left, rc.bottom - rc.top);
+        if pw > 0 && ph > 0 {
+            if let Err(e) = paint_into(hwnd, hdc, pw, ph) {
+                crate::util::log(&format!("settings paint failed: {e}"));
+            }
+        }
+        let _ = EndPaint(hwnd, &ps);
+    }
+}
+
+fn paint_into(hwnd: HWND, hdc: HDC, pw: i32, ph: i32) -> Result<()> {
+    let Some((dpi, tab, hover, pressed, view, page_scroll, icon_src)) = ui(|u| {
+        (
+            u.dpi,
+            u.tab,
+            u.hover,
+            u.pressed,
+            UiView {
+                query: u.query.clone(),
+                list_scroll: u.list_scroll,
+                details: u.details,
+                learn_msg: u.learn_msg.clone(),
+                learn_tone: u.learn_tone,
+                learn_ready: u.learned.map(|(vk, _, _)| !is_typing_key(vk)).unwrap_or(false) && !u.learning,
+                learning: u.learning,
+            },
+            u.page_scroll,
+            u.icon.clone(),
+        )
+    }) else {
+        return Ok(());
+    };
+    let Some(snap) = snapshot(&view.query) else { return Ok(()) };
+    let pal = pal_for(&snap.s.theme);
+    let sc = dpi as f32 / 96.0;
+    let (wd, hd) = (pw as f32 / sc, ph as f32 / sc);
+
+    unsafe {
+        let mem = CreateCompatibleDC(Some(hdc));
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER { biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32, biWidth: pw, biHeight: -ph, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB.0, ..Default::default() },
+            ..Default::default()
+        };
+        let mut bits = std::ptr::null_mut();
+        let dib = CreateDIBSection(Some(mem), &bmi, DIB_RGB_COLORS, &mut bits, None, 0)?;
+        let old = SelectObject(mem, dib.into());
+
+        let mut out: Option<(Vec<(R, Act)>, R, R, f32, f32, Vec<(Act, R)>)> = None;
+        let res = with_gfx(|g| {
+            let props = D2D1_RENDER_TARGET_PROPERTIES {
+                r#type: D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+                pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_IGNORE },
+                dpiX: dpi as f32,
+                dpiY: dpi as f32,
+                usage: D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE,
+                minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
+            };
+            let dcrt = g.d2d.CreateDCRenderTarget(&props)?;
+            dcrt.BindDC(mem, &RECT { left: 0, top: 0, right: pw, bottom: ph })?;
+            let rt: ID2D1RenderTarget = dcrt.cast()?;
+            rt.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+            let icon = icon_src.as_ref().and_then(|src| rt.CreateBitmapFromWicBitmap(src, None).ok());
+            rt.BeginDraw();
+            rt.Clear(Some(&color(pal.bg)));
+            let brush = rt.CreateSolidColorBrush(&color(pal.text), None)?;
+            let mut dc = Dc { rt: &rt, g, brush, p: pal, hits: Vec::new(), hover, pressed };
+            sidebar(&mut dc, tab, icon.as_ref());
+            let x0 = SIDEBAR + 8.0;
+            let cw = wd - x0 - PAD;
+            let mut search = R::default();
+            let mut list = R::default();
+            let mut list_h = 0.0;
+            let mut page_h = hd;
+            let mut sliders = Vec::new();
+            // content area clip + page scroll
+            rt.PushAxisAlignedClip(&R::new(SIDEBAR, 0.0, wd - SIDEBAR, hd).d2d(), D2D1_ANTIALIAS_MODE_ALIASED);
+            match tab {
+                Tab::Device => {
+                    let (s, l, lh) = page_device(&mut dc, &snap, &view, x0, cw, hd);
+                    search = s;
+                    list = l;
+                    list_h = lh;
+                }
+                Tab::Trigger => {
+                    let (h, sl) = page_trigger(&mut dc, &snap, &view, x0, cw, -page_scroll);
+                    page_h = h;
+                    sliders = sl;
+                }
+                Tab::About => {
+                    page_h = page_about(&mut dc, &snap, x0, cw, -page_scroll, icon.as_ref());
+                }
+            }
+            rt.PopAxisAlignedClip();
+            // page scrollbar
+            if tab != Tab::Device && page_h > hd {
+                let th = (hd * hd / page_h).max(40.0);
+                let ty = (hd - th) * (page_scroll / (page_h - hd)).clamp(0.0, 1.0);
+                dc.fill(R::new(wd - 6.0, ty + 2.0, 3.0, th - 4.0), 1.5, pal.track_off & 0x99FFFFFF);
+            }
+            out = Some((std::mem::take(&mut dc.hits), search, list, list_h, page_h, sliders));
+            rt.EndDraw(None, None)
+        });
+        if res.is_ok() {
+            let _ = BitBlt(hdc, 0, 0, pw, ph, Some(mem), 0, 0, SRCCOPY);
+        }
+        SelectObject(mem, old);
+        let _ = DeleteObject(dib.into());
+        let _ = DeleteDC(mem);
+
+        if let Some((hits, search, list, list_h, page_h, sliders)) = out {
+            let edit = ui(|u| {
+                u.hits = hits;
+                u.list_rect = list;
+                u.list_h = list_h;
+                u.page_h = page_h;
+                u.pal = pal;
+                if let Some((a, _)) = u.dragging {
+                    if let Some((_, r)) = sliders.iter().find(|(x, _)| *x == a) {
+                        u.dragging = Some((a, *r));
+                    }
+                }
+                let changed = (search.x - u.search_rect.x).abs() > 0.1 || (search.y - u.search_rect.y).abs() > 0.1 || (search.w - u.search_rect.w).abs() > 0.1;
+                u.search_rect = search;
+                (u.search, changed, tab == Tab::Device)
+            });
+            if let Some((edit, changed, show)) = edit {
+                if changed && show {
+                    let _ = SetWindowPos(
+                        edit,
+                        None,
+                        ((search.x + 12.0) * sc) as i32,
+                        ((search.y + 8.0) * sc) as i32,
+                        ((search.w - 48.0) * sc) as i32,
+                        (20.0 * sc) as i32,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
+                }
+                let visible = IsWindowVisible(edit).as_bool();
+                if show != visible {
+                    let _ = ShowWindow(edit, if show { SW_SHOWNA } else { SW_HIDE });
+                }
+            }
+        }
+        let _ = hwnd;
+        res
+    }
+}
+
+fn is_typing_key(vk: u32) -> bool {
+    matches!(vk, 0x08 | 0x09 | 0x0D | 0x20) || (0x30..=0x5A).contains(&vk)
+}
+
+// ───────────────────────── window ─────────────────────────
 
 pub fn open(tab: Option<Tab>) {
-    let existing = ui(|u| u.hwnd);
-    if let Some(h) = existing {
+    if let Some(h) = ui(|u| u.hwnd) {
         if let Some(t) = tab {
-            select_tab(t);
+            ui(|u| {
+                u.tab = t;
+                u.page_scroll = 0.0;
+            });
+            repaint();
         }
         unsafe {
             let _ = ShowWindow(h, SW_RESTORE);
@@ -156,373 +1114,434 @@ pub fn open(tab: Option<Tab>) {
         let hinst = GetModuleHandleW(None).unwrap_or_default();
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(proc_),
             hInstance: hinst.into(),
             lpszClassName: CLASS,
-            hbrBackground: GetSysColorBrush(COLOR_WINDOW),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
             hIcon: LoadImageW(Some(hinst.into()), PCWSTR(1 as _), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE).map(|h| HICON(h.0)).unwrap_or_default(),
             ..Default::default()
         };
         RegisterClassExW(&wc);
-        let title = w(&format!("Fn Cheatsheet {APP_VERSION} — {}", t("Settings", "설정")));
-        let Ok(hwnd) = CreateWindowExW(
-            WINDOW_EX_STYLE(0),
-            CLASS,
-            title.pcwstr(),
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-            CW_USEDEFAULT, CW_USEDEFAULT, 100, 100,
-            None, None, Some(hinst.into()), None,
-        ) else {
+        let title = w(&format!("Fn Cheatsheet — {}", t("Settings", "설정")));
+        let Ok(hwnd) = CreateWindowExW(WINDOW_EX_STYLE(0), CLASS, title.pcwstr(), WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 100, 100, None, None, Some(hinst.into()), None) else {
             return;
         };
         let dpi = GetDpiForWindow(hwnd).max(96);
+        let search = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            wlit!("EDIT"),
+            PCWSTR::null(),
+            WINDOW_STYLE(ES_AUTOHSCROLL as u32) | WS_CHILD | WS_TABSTOP,
+            0, 0, 10, 10,
+            Some(hwnd),
+            Some(HMENU(ID_SEARCH as isize as _)),
+            None,
+            None,
+        )
+        .unwrap_or_default();
+        // Placeholder text drawn by the edit control itself (EM_SETCUEBANNER).
+        let cue = w(t("Search model, code or machine type (e.g. P1503, T14 Gen 4, 21HM)", "모델명·모델 코드·머신 타입 검색 (예: P1503, T14 Gen 4, 21HM)"));
+        SendMessageW(search, 0x1501 /* EM_SETCUEBANNER */, Some(WPARAM(1)), Some(LPARAM(cue.pcwstr().0 as isize)));
+        let theme = app::with(|a| a.settings.theme.clone()).unwrap_or_default();
+        let pal = pal_for(&theme);
         UI.with(|u| {
             *u.borrow_mut() = Some(Ui {
-                hwnd, dpi, font: HFONT::default(), bold: HFONT::default(), tab: tab.unwrap_or(Tab::Device), controls: vec![], rows: vec![],
-                source_urls: vec![], learning: false, learned: None, learn_saw: false, colors: vec![],
+                hwnd, dpi, tab: tab.unwrap_or(Tab::Device), hits: vec![], hover: None, pressed: None, dragging: None, tracking: false,
+                search, search_font: HFONT::default(), search_brush: HBRUSH::default(), search_rect: R::default(), query: String::new(),
+                list_rect: R::default(), list_scroll: 0.0, list_h: 0.0, page_scroll: 0.0, page_h: 0.0, details: false,
+                learning: false, learned: None, learn_saw: false, learn_msg: String::new(), learn_tone: 0,
+                icon: icon_source((64.0 * dpi as f32 / 96.0) as i32), pal,
             })
         });
-        resize_window(hwnd, dpi, None);
-        build();
+        apply_dpi_and_theme(hwnd, dpi, None);
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = SetForegroundWindow(hwnd);
     }
 }
 
-fn resize_window(hwnd: HWND, dpi: u32, suggested: Option<&RECT>) {
+/// Window size, search font/brush and title-bar colors for the current DPI and theme.
+fn apply_dpi_and_theme(hwnd: HWND, dpi: u32, suggested: Option<&RECT>) {
+    let theme = app::with(|a| a.settings.theme.clone()).unwrap_or_default();
+    let pal = pal_for(&theme);
     unsafe {
-        let mut r = RECT { left: 0, top: 0, right: W_DIP * dpi as i32 / 96, bottom: H_DIP * dpi as i32 / 96 };
-        let _ = AdjustWindowRectExForDpi(&mut r, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, false, WINDOW_EX_STYLE(0), dpi);
+        // title bar matches the window background
+        let dark: i32 = pal.dark as i32;
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark as *const _ as _, 4);
+        let cap = colorref(pal.bg);
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &cap as *const _ as _, 4);
+        let border = colorref(pal.card_border);
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &border as *const _ as _, 4);
+
+        let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+        let mut r = RECT { left: 0, top: 0, right: (W_DIP * dpi as f32 / 96.0) as i32, bottom: (H_DIP * dpi as f32 / 96.0) as i32 };
+        let _ = AdjustWindowRectExForDpi(&mut r, style, false, WINDOW_EX_STYLE(0), dpi);
         let (w, h) = (r.right - r.left, r.bottom - r.top);
         match suggested {
             Some(s) => {
                 let _ = SetWindowPos(hwnd, None, s.left, s.top, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
             }
             None => {
-                // center on the monitor with the cursor
-                let mut pt = windows::Win32::Foundation::POINT::default();
+                let mut pt = POINT::default();
                 let _ = GetCursorPos(&mut pt);
-                let mon = windows::Win32::Graphics::Gdi::MonitorFromPoint(pt, windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST);
-                let mut mi = windows::Win32::Graphics::Gdi::MONITORINFO { cbSize: std::mem::size_of::<windows::Win32::Graphics::Gdi::MONITORINFO>() as u32, ..Default::default() };
-                let _ = windows::Win32::Graphics::Gdi::GetMonitorInfoW(mon, &mut mi);
+                let mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+                let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+                let _ = GetMonitorInfoW(mon, &mut mi);
                 let wa = mi.rcWork;
-                let x = wa.left + ((wa.right - wa.left - w) / 2).max(0);
-                let y = wa.top + ((wa.bottom - wa.top - h) / 2).max(0);
-                let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+                let _ = SetWindowPos(hwnd, None, wa.left + ((wa.right - wa.left - w) / 2).max(0), wa.top + ((wa.bottom - wa.top - h) / 2).max(0), w, h, SWP_NOZORDER | SWP_NOACTIVATE);
             }
         }
-    }
-}
 
-fn make_fonts(dpi: u32) -> (HFONT, HFONT) {
-    unsafe {
-        let mut ncm = NONCLIENTMETRICSW { cbSize: std::mem::size_of::<NONCLIENTMETRICSW>() as u32, ..Default::default() };
-        let _ = SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS.0, ncm.cbSize, Some(&mut ncm as *mut _ as _), 0, dpi);
-        let normal = CreateFontIndirectW(&ncm.lfMessageFont);
-        let mut b = ncm.lfMessageFont;
-        b.lfWeight = 600;
-        let bold = CreateFontIndirectW(&b);
-        (normal, bold)
-    }
-}
-
-/// (Re)creates every control for the current DPI and language.
-fn build() {
-    let Some((hwnd, dpi, old_ctrls, old_fonts, tab)) = ui(|u| (u.hwnd, u.dpi, std::mem::take(&mut u.controls), (u.font, u.bold), u.tab)) else { return };
-    unsafe {
-        for (_, c) in old_ctrls {
-            let _ = DestroyWindow(c);
-        }
-        if !old_fonts.0 .0.is_null() {
-            let _ = DeleteObject(HGDIOBJ(old_fonts.0 .0));
-            let _ = DeleteObject(HGDIOBJ(old_fonts.1 .0));
-        }
-        let title = w(&format!("Fn Cheatsheet {APP_VERSION} — {}", t("Settings", "설정")));
-        let _ = SetWindowTextW(hwnd, title.pcwstr());
-    }
-    let (font, bold) = make_fonts(dpi);
-    ui(|u| {
-        u.font = font;
-        u.bold = bold;
-    });
-
-    let s = |v: i32| v * dpi as i32 / 96;
-    let mk = |tab: Option<Tab>, class: PCWSTR, text: &str, style: u32, x: i32, y: i32, wd: i32, ht: i32, id: i32, is_bold: bool| -> HWND {
-        let txt = w(text);
-        let h = unsafe {
-            CreateWindowExW(
-                if class == wlit!("EDIT") || class == wlit!("LISTBOX") { WS_EX_CLIENTEDGE } else { WINDOW_EX_STYLE(0) },
-                class,
-                txt.pcwstr(),
-                WINDOW_STYLE(style) | WS_CHILD,
-                s(x), s(y), s(wd), s(ht),
-                Some(hwnd),
-                Some(HMENU(id as isize as _)),
-                None,
-                None,
-            )
-            .unwrap_or_default()
-        };
-        send(h, WM_SETFONT, if is_bold { bold.0 as usize } else { font.0 as usize }, 1);
-        ui(|u| u.controls.push((tab, h)));
-        h
-    };
-    let stat = |tab: Tab, text: &str, x: i32, y: i32, wd: i32, ht: i32, id: i32, b: bool| mk(Some(tab), wlit!("STATIC"), text, 0, x, y, wd, ht, id, b);
-    let btn = |tab: Tab, text: &str, x: i32, y: i32, wd: i32, id: i32| mk(Some(tab), wlit!("BUTTON"), text, (BS_PUSHBUTTON as u32) | WS_TABSTOP.0, x, y, wd, 28, id, false);
-    let check = |tab: Tab, text: &str, x: i32, y: i32, wd: i32, id: i32| mk(Some(tab), wlit!("BUTTON"), text, (BS_AUTOCHECKBOX as u32) | WS_TABSTOP.0, x, y, wd, 22, id, false);
-    let combo = |tab: Tab, x: i32, y: i32, wd: i32, id: i32, items: &[&str], sel: usize| {
-        let h = mk(Some(tab), wlit!("COMBOBOX"), "", (CBS_DROPDOWNLIST as u32) | WS_TABSTOP.0 | WS_VSCROLL.0, x, y, wd, 200, id, false);
-        for it in items {
-            let ws = w(it);
-            send(h, CB_ADDSTRING, 0, ws.pcwstr().0 as isize);
-        }
-        send(h, CB_SETCURSEL, sel, 0);
-        h
-    };
-    let track = |tab: Tab, x: i32, y: i32, wd: i32, id: i32, min: i32, max: i32, pos: i32| {
-        let h = mk(Some(tab), TRACKBAR_CLASSW, "", TBS_HORZ | TBS_NOTICKS | WS_TABSTOP.0, x, y, wd, 30, id, false);
-        send(h, TBM_SETRANGE, 1, ((max as isize) << 16) | (min as isize & 0xFFFF));
-        send(h, TBM_SETPOS, 1, pos as isize);
-        h
-    };
-
-    // Tab strip
-    let tabs = mk(None, WC_TABCONTROLW, "", WS_TABSTOP.0 | WS_CLIPSIBLINGS.0, 10, 8, W_DIP - 20, 30, ID_TAB, false);
-    for (i, name) in [t("Device", "기기"), t("Trigger & display", "누르기·표시"), t("About & updates", "정보·업데이트")].iter().enumerate() {
-        let mut ws = w(name);
-        let tci = TCITEMW { mask: TCIF_TEXT, pszText: ws.pwstr(), ..Default::default() };
-        send(tabs, TCM_INSERTITEMW, i, &tci as *const _ as isize);
-    }
-
-    let Some((settings, device, det_kind, det_text, list_info, db_errors, data_count, data_version, update_status, sources, notes)) = app::with(|a| {
-        let det_text = match a.detection.kind {
-            MatchKind::Matched => format!("{}{}  ({})", t("Detected: ", "자동 감지: "), a.db.profiles[a.detection.candidates[0].index].short_name(), a.detection.candidates[0].reason),
-            MatchKind::Ambiguous => {
-                let top = a.detection.candidates[0].score;
-                let names: Vec<&str> = a.detection.candidates.iter().filter(|c| c.score == top).map(|c| a.db.profiles[c.index].short_name()).collect();
-                format!("{}{}", t("Several profiles match equally — not guessing. Pick yours below: ", "똑같이 맞는 프로필이 여러 개라 추측하지 않았어요. 아래에서 고르세요: "), names.join(", "))
-            }
-            MatchKind::Unknown => t(
-                "This model is not in the list yet. Fn Cheatsheet does not guess — choose a model with the same keyboard below, or request it.",
-                "아직 목록에 없는 모델이에요. 추측하지 않으니 키보드가 같은 모델을 아래에서 고르거나 추가를 요청해 주세요.",
-            )
-            .to_string(),
-        };
-        let active = a.active();
-        (
-            a.settings.clone(),
-            a.device.clone(),
-            a.detection.kind,
-            det_text,
-            (),
-            a.db.errors.clone(),
-            a.db.profiles.len(),
-            a.db.data_version.clone(),
-            a.update_status.clone(),
-            active.map(|p| p.sources.iter().map(|s| (s.title.clone(), s.url.clone(), s.kind.clone())).collect::<Vec<_>>()).unwrap_or_default(),
-            active.map(|p| p.notes().to_string()).unwrap_or_default(),
-        )
-    }) else {
-        return;
-    };
-    let _ = list_info;
-
-    // ── Device ──
-    let d = Tab::Device;
-    stat(d, &device.short_label(), 20, 48, 640, 20, 0, true);
-    mk(Some(d), wlit!("EDIT"), &device.report(), (ES_MULTILINE | ES_READONLY) as u32 | WS_TABSTOP.0, 20, 72, 640, 112, ID_DEV_REPORT, false);
-    stat(d, &det_text, 20, 190, 640, 36, ID_DET, true);
-    btn(d, t("Copy device info", "기기 정보 복사"), 20, 230, 160, ID_COPY);
-    btn(d, t("Request this model (GitHub)", "이 모델 추가 요청 (GitHub)"), 188, 230, 230, ID_REQUEST);
-    let mut auto_label = t("Use automatic detection (recommended)", "자동 감지 사용 (권장)").to_string();
-    if det_kind != MatchKind::Matched {
-        auto_label += t("  — not available for this PC", "  — 이 PC는 자동 감지 불가");
-    }
-    let auto = mk(Some(d), wlit!("BUTTON"), &auto_label, (BS_AUTORADIOBUTTON as u32) | WS_TABSTOP.0 | WS_GROUP.0, 20, 270, 640, 22, ID_AUTO, false);
-    mk(Some(d), wlit!("BUTTON"), t("Always use the model I pick:", "내가 고른 모델을 항상 사용:"), BS_AUTORADIOBUTTON as u32, 20, 294, 640, 22, ID_MANUAL, false);
-    unsafe {
-        let _ = EnableWindow(auto, det_kind == MatchKind::Matched);
-    }
-    stat(d, t("Search:", "검색:"), 20, 326, 60, 20, 0, false);
-    mk(Some(d), wlit!("EDIT"), "", (ES_AUTOHSCROLL as u32) | WS_TABSTOP.0, 84, 322, 576, 24, ID_SEARCH, false);
-    mk(Some(d), wlit!("LISTBOX"), "", (LBS_NOTIFY | LBS_NOINTEGRALHEIGHT) as u32 | WS_VSCROLL.0 | WS_TABSTOP.0, 20, 352, 640, 178, ID_LIST, false);
-    stat(d, "", 20, 536, 640, 20, ID_ACTIVE, true);
-    btn(d, t("Preview", "미리 보기"), 20, 562, 120, ID_PREVIEW);
-    btn(d, t("Open my profiles folder", "내 프로필 폴더 열기"), 148, 562, 200, ID_FOLDER);
-    btn(d, t("Reload", "다시 불러오기"), 356, 562, 140, ID_RELOAD);
-    if !db_errors.is_empty() {
-        stat(d, &format!("{}{}", t("Some profile files could not be loaded: ", "불러오지 못한 프로필: "), db_errors.join("; ")), 20, 598, 640, 36, 0, false);
-    }
-
-    // ── Trigger & display ──
-    let g = Tab::Trigger;
-    stat(g, t(
-        "On almost every ASUS and Lenovo laptop the Fn key is handled inside the keyboard controller and never reaches Windows, so no app can see it held. Fn Cheatsheet shows the sheet when you hold another key alone — by default Left Ctrl, right next to Fn.",
-        "ASUS·레노버 노트북 대부분은 Fn 키를 키보드 컨트롤러 안에서 처리해서 Windows에 신호가 오지 않아요. 그래서 Fn 바로 옆의 왼쪽 Ctrl처럼 다른 키를 혼자 길게 누르면 보여 줘요.",
-    ), 20, 48, 640, 52, 0, false);
-    check(g, t("Show the cheat sheet while I hold the key", "키를 길게 누르고 있으면 치트시트 보기"), 20, 104, 640, ID_TRIG_ENABLED);
-    stat(g, t("Key:", "키:"), 20, 138, 120, 20, 0, false);
-    let presets: [(u32, &str); 4] = [
-        (VK_LCONTROL, t("Left Ctrl (next to Fn)", "왼쪽 Ctrl (Fn 옆)")),
-        (VK_ANY_CTRL, t("Either Ctrl", "양쪽 Ctrl 아무거나")),
-        (VK_RSHIFT, t("Right Shift", "오른쪽 Shift")),
-        (VK_APPS, t("Menu key", "메뉴 키")),
-    ];
-    let mut key_items: Vec<String> = presets.iter().map(|p| p.1.to_string()).collect();
-    let preset_sel = presets.iter().position(|p| p.0 == settings.trigger_vk && settings.trigger_scan == 0);
-    if preset_sel.is_none() {
-        key_items.push(format!("{}{}", t("Captured: ", "직접 등록: "), describe_key(settings.trigger_vk, settings.trigger_scan, settings.trigger_extended)));
-    }
-    let key_refs: Vec<&str> = key_items.iter().map(String::as_str).collect();
-    combo(g, 150, 134, 300, ID_TRIG_KEY, &key_refs, preset_sel.unwrap_or(key_items.len() - 1));
-    stat(g, "", 20, 174, 200, 20, ID_HOLD_LABEL, false);
-    track(g, 220, 168, 300, ID_HOLD, 3, 20, (settings.hold_ms / 100) as i32);
-    check(g, t("Don't show over full-screen apps and games", "전체 화면 앱·게임 위에는 띄우지 않기"), 20, 204, 640, ID_SKIP_FS);
-    stat(g, t(
-        "Pressing any other key, clicking or scrolling while holding cancels it, so Ctrl+C and Ctrl+click work as usual.",
-        "누르는 동안 다른 키를 누르거나 클릭·스크롤하면 취소돼요. Ctrl+C, Ctrl+클릭은 평소처럼 동작해요.",
-    ), 20, 230, 640, 36, 0, false);
-    stat(g, t("Does my Fn key send anything?", "내 Fn 키가 신호를 보내나요?"), 20, 276, 640, 20, 0, true);
-    stat(g, t("Press Start, then hold Fn alone for two seconds.", "시작을 누른 뒤 Fn 키만 2초 동안 누르고 있어 보세요."), 20, 298, 640, 20, 0, false);
-    btn(g, t("Start", "시작"), 20, 324, 120, ID_LEARN);
-    let use_btn = btn(g, t("Use this key", "이 키로 쓰기"), 148, 324, 160, ID_USE_LEARNED);
-    unsafe {
-        let _ = EnableWindow(use_btn, false);
-    }
-    stat(g, "", 20, 358, 640, 40, ID_LEARN_STATUS, true);
-    stat(g, t("General", "일반"), 20, 408, 640, 20, 0, true);
-    check(g, t("Start with Windows", "Windows 시작 시 실행"), 20, 432, 640, ID_STARTUP);
-    stat(g, t("Language:", "언어:"), 20, 466, 120, 20, 0, false);
-    combo(g, 150, 462, 220, ID_LANG, &[t("Windows language", "Windows 언어 따라"), "한국어", "English"], ["auto", "ko", "en"].iter().position(|v| *v == settings.language).unwrap_or(0));
-    stat(g, t("Theme:", "화면 테마:"), 20, 500, 120, 20, 0, false);
-    combo(g, 150, 496, 220, ID_THEME, &[t("Windows theme", "Windows 테마 따라"), t("Dark", "어둡게"), t("Light", "밝게")], ["auto", "dark", "light"].iter().position(|v| *v == settings.theme).unwrap_or(0));
-    stat(g, "", 20, 540, 130, 20, ID_SCALE_LABEL, false);
-    track(g, 150, 534, 260, ID_SCALE, 7, 16, (settings.overlay_scale * 10.0).round() as i32);
-    btn(g, t("Preview", "미리 보기"), 420, 534, 120, ID_PREVIEW2);
-
-    // ── About & updates ──
-    let a = Tab::About;
-    stat(a, &format!("Fn Cheatsheet {APP_VERSION}"), 20, 48, 640, 22, 0, true);
-    stat(a, t("Hold a key to see what your laptop's Fn keys do.", "키를 길게 누르면 내 노트북의 Fn 키 기능을 보여 줘요."), 20, 72, 640, 20, 0, false);
-    stat(a, &format!("{}{}{} · {}", t("Model data: ", "모델 데이터: "), data_count, t(" profiles", "개 프로필"), data_version), 20, 94, 640, 20, 0, false);
-    check(a, t("Update automatically (checks GitHub once a day)", "자동 업데이트 (하루 한 번 GitHub 확인)"), 20, 124, 640, ID_AUTO_UPDATE);
-    btn(a, t("Check now", "지금 확인"), 20, 152, 120, ID_CHECK_NOW);
-    stat(a, &update_status, 150, 157, 510, 36, ID_UPDATE_STATUS, false);
-    stat(a, t(
-        "Privacy: the only network access is the update check to GitHub (api.github.com, github.com). The app reads only your PC's model strings (no serial numbers) and never records what you type — the keyboard hook only checks whether the trigger key is held alone. It never runs as administrator.",
-        "개인정보: 네트워크는 업데이트 확인(api.github.com, github.com)에만 써요. PC 모델 문자열만 읽고(일련번호는 읽지 않음), 입력한 내용은 기록하지 않아요. 키보드 후킹은 트리거 키를 혼자 누르고 있는지만 확인하고, 관리자 권한으로 실행하지 않아요.",
-    ), 20, 198, 640, 70, 0, false);
-    btn(a, t("Website & model list", "소개 페이지·모델 목록"), 20, 274, 200, ID_SITE);
-    btn(a, "GitHub", 228, 274, 110, ID_GITHUB);
-    btn(a, t("Report a problem", "문제 신고"), 346, 274, 140, ID_ISSUES);
-    stat(a, t("Sources for the model in use (double-click to open)", "사용 중인 모델의 출처 (두 번 클릭하면 열림)"), 20, 316, 640, 20, 0, true);
-    let src_list = mk(Some(a), wlit!("LISTBOX"), "", (LBS_NOTIFY | LBS_NOINTEGRALHEIGHT) as u32 | WS_VSCROLL.0 | WS_HSCROLL.0 | WS_TABSTOP.0, 20, 340, 640, 104, ID_SOURCES, false);
-    let mut urls = Vec::new();
-    for (title, url, kind) in &sources {
-        let label = format!("{}{}", if title.is_empty() { url } else { title }, if kind == "community" { t(" (community)", " (커뮤니티)") } else { "" });
-        let ws = w(&label);
-        send(src_list, LB_ADDSTRING, 0, ws.pcwstr().0 as isize);
-        urls.push(url.clone());
-    }
-    send(src_list, LB_SETHORIZONTALEXTENT, s(1400) as usize, 0);
-    btn(a, t("Open source", "출처 열기"), 20, 450, 120, ID_OPEN_SOURCE);
-    stat(a, &notes, 20, 486, 640, 110, 0, false);
-    stat(a, t("MIT License · © 2026 jeiel85 · Not affiliated with ASUS or Lenovo.", "MIT License · © 2026 jeiel85 · ASUS·Lenovo와 관계없는 비공식 프로젝트예요."), 20, 604, 640, 20, 0, false);
-    ui(|u| u.source_urls = urls);
-
-    // Initial values
-    set_checked(ID_AUTO, settings.profile_mode == "auto");
-    set_checked(ID_MANUAL, settings.profile_mode == "manual");
-    set_checked(ID_TRIG_ENABLED, settings.trigger_enabled);
-    set_checked(ID_SKIP_FS, settings.skip_fullscreen);
-    set_checked(ID_STARTUP, startup::is_enabled());
-    set_checked(ID_AUTO_UPDATE, settings.auto_update);
-    set_color(ID_DET, if det_kind == MatchKind::Matched { GOOD } else { WARN });
-    update_hold_label();
-    update_scale_label();
-    fill_list();
-    refresh_active();
-    select_tab(tab);
-}
-
-fn select_tab(tab: Tab) {
-    let Some((controls, tabs)) = ui(|u| {
-        u.tab = tab;
-        (u.controls.clone(), unsafe { GetDlgItem(Some(u.hwnd), ID_TAB).unwrap_or_default() })
-    }) else {
-        return;
-    };
-    let idx = match tab {
-        Tab::Device => 0,
-        Tab::Trigger => 1,
-        Tab::About => 2,
-    };
-    send(tabs, TCM_SETCURSEL, idx, 0);
-    unsafe {
-        for (t, h) in controls {
-            let show = t.is_none() || t == Some(tab);
-            let _ = ShowWindow(h, if show { SW_SHOW } else { SW_HIDE });
-        }
-    }
-}
-
-// ───────────────────────── device tab ─────────────────────────
-
-fn fill_list() {
-    let list = item(ID_LIST);
-    let q = get_text(item(ID_SEARCH)).trim().to_lowercase();
-    let Some((rows, labels, selected)) = app::with(|a| {
-        let cands: Vec<usize> = a.detection.candidates.iter().map(|c| c.index).collect();
-        let mut idx: Vec<usize> = (0..a.db.profiles.len())
-            .filter(|&i| {
-                let p = &a.db.profiles[i];
-                q.is_empty() || format!("{} {} {} {} {}", p.vendor, p.series, p.name, p.match_rule.product.join(" "), p.match_rule.mtm.join(" ")).to_lowercase().contains(&q)
-            })
-            .collect();
-        idx.sort_by(|&x, &y| {
-            let (px, py) = (&a.db.profiles[x], &a.db.profiles[y]);
-            cands.contains(&y).cmp(&cands.contains(&x)).then_with(|| px.vendor.cmp(&py.vendor)).then_with(|| px.name.cmp(&py.name))
+        // search box font and colors
+        let mut lf = LOGFONTW { lfHeight: -((13.0 * dpi as f32 / 96.0).round() as i32), lfWeight: 400, lfCharSet: DEFAULT_CHARSET, lfQuality: CLEARTYPE_QUALITY, ..Default::default() };
+        let face: Vec<u16> = FONT.encode_utf16().collect();
+        lf.lfFaceName[..face.len()].copy_from_slice(&face);
+        let font = CreateFontIndirectW(&lf);
+        let brush = CreateSolidBrush(colorref(pal.control));
+        let old = ui(|u| {
+            u.dpi = dpi;
+            u.pal = pal;
+            u.search_rect = R::default(); // force reposition
+            let old = (u.search_font, u.search_brush, u.search);
+            u.search_font = font;
+            u.search_brush = brush;
+            old
         });
-        let labels: Vec<String> = idx
-            .iter()
-            .map(|&i| {
-                let p = &a.db.profiles[i];
-                format!(
-                    "{}{} · {}{}{}",
-                    if cands.contains(&i) { "★ " } else { "" },
-                    p.vendor,
-                    p.name,
-                    if p.years.is_empty() { String::new() } else { format!("  ({})", p.years) },
-                    if p.is_builtin() { "" } else { t("  [my file]", "  [내 파일]") }
-                )
-            })
-            .collect();
-        let selected = if a.settings.profile_mode == "manual" { idx.iter().position(|&i| a.db.profiles[i].id.eq_ignore_ascii_case(&a.settings.manual_profile_id)) } else { None };
-        (idx, labels, selected)
-    }) else {
-        return;
-    };
-    ui(|u| u.rows = rows);
-    send(list, LB_RESETCONTENT, 0, 0);
-    for l in labels {
-        let ws = w(&l);
-        send(list, LB_ADDSTRING, 0, ws.pcwstr().0 as isize);
+        if let Some((of, ob, edit)) = old {
+            SendMessageW(edit, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
+            if !of.0.is_null() {
+                let _ = DeleteObject(of.into());
+            }
+            if !ob.0.is_null() {
+                let _ = DeleteObject(ob.into());
+            }
+        }
+        let _ = InvalidateRect(Some(hwnd), None, false);
     }
-    send(list, LB_SETCURSEL, selected.map(|s| s as usize).unwrap_or(usize::MAX), 0);
 }
 
-fn refresh_active() {
-    let Some((name, mode_auto)) = app::with(|a| (a.active().map(|p| p.short_name().to_string()), a.settings.profile_mode == "auto")) else { return };
-    let text = format!(
-        "{}{}",
-        t("In use: ", "사용 중: "),
-        name.clone().unwrap_or_else(|| t("none — the sheet will ask you to pick a model", "없음 — 화면에 모델을 고르라는 안내가 나와요").to_string())
-    );
-    set_text(item(ID_ACTIVE), &text);
-    set_color(ID_ACTIVE, if name.is_some() { GOOD } else { WARN });
-    set_checked(ID_AUTO, mode_auto);
-    set_checked(ID_MANUAL, !mode_auto);
+fn hit_at(lp: LPARAM) -> (f32, f32, Option<Act>) {
+    let sc = scale();
+    let x = (lp.0 & 0xFFFF) as i16 as f32 / sc;
+    let y = ((lp.0 >> 16) & 0xFFFF) as i16 as f32 / sc;
+    let a = ui(|u| u.hits.iter().rev().find(|(r, _)| r.contains(x, y)).map(|(_, a)| *a)).flatten();
+    (x, y, a)
+}
+
+fn slider_value(act: Act, frac: f32) {
+    let frac = frac.clamp(0.0, 1.0);
+    app::with(|a| match act {
+        Act::HoldSlider => a.settings.hold_ms = ((300.0 + frac * 1700.0) / 100.0).round() as u32 * 100,
+        Act::ScaleSlider => a.settings.overlay_scale = ((0.7 + frac * 0.9) * 10.0).round() / 10.0,
+        _ => {}
+    });
+}
+
+fn act(a: Act) {
+    let hwnd = ui(|u| u.hwnd).unwrap_or_default();
+    match a {
+        Act::Nav(t) => {
+            ui(|u| {
+                u.tab = t;
+                u.page_scroll = 0.0;
+            });
+        }
+        Act::CopyInfo => {
+            let r = app::with(|a| a.device.report()).unwrap_or_default();
+            copy_to_clipboard(hwnd, &r);
+            app::balloon("Fn Cheatsheet", t("Device info copied", "기기 정보를 복사했어요"));
+        }
+        Act::Request => request_model(),
+        Act::Details => {
+            ui(|u| u.details = !u.details);
+        }
+        Act::ModeAuto => {
+            app::with(|a| a.settings.profile_mode = "auto".into());
+            app::apply_settings();
+        }
+        Act::ModeManual => {
+            app::with(|a| {
+                a.settings.profile_mode = "manual".into();
+                if a.db.find(&a.settings.manual_profile_id).is_none() {
+                    let pick = a.active_index().or_else(|| a.detection.candidates.first().map(|c| c.index));
+                    if let Some(i) = pick {
+                        a.settings.manual_profile_id = a.db.profiles[i].id.clone();
+                    }
+                }
+            });
+            app::apply_settings();
+        }
+        Act::Row(i) => {
+            app::with(|a| {
+                a.settings.profile_mode = "manual".into();
+                a.settings.manual_profile_id = a.db.profiles[i].id.clone();
+            });
+            app::apply_settings();
+        }
+        Act::Preview => app::show_overlay(true),
+        Act::Folder => open_profiles_folder(),
+        Act::Reload => {
+            app::with(|a| a.reload_profiles());
+            app::update_tray_tip();
+        }
+        Act::TriggerEnabled => {
+            app::with(|a| a.settings.trigger_enabled = !a.settings.trigger_enabled);
+            app::apply_settings();
+        }
+        Act::SkipFs => {
+            app::with(|a| a.settings.skip_fullscreen = !a.settings.skip_fullscreen);
+            app::apply_settings();
+        }
+        Act::Key(vk) => {
+            if vk != 0 {
+                app::with(|a| {
+                    a.settings.trigger_vk = vk;
+                    a.settings.trigger_scan = 0;
+                    a.settings.trigger_extended = false;
+                });
+                app::apply_settings();
+            }
+        }
+        Act::LearnStart => start_learning(),
+        Act::LearnUse => use_learned(),
+        Act::Startup => startup::set(!startup::is_enabled()),
+        Act::Lang(i) => {
+            app::with(|a| a.settings.language = ["auto", "ko", "en"][i as usize].into());
+            app::apply_settings();
+            unsafe {
+                let title = w(&format!("Fn Cheatsheet — {}", t("Settings", "설정")));
+                let _ = SetWindowTextW(hwnd, title.pcwstr());
+            }
+        }
+        Act::Theme(i) => {
+            app::with(|a| a.settings.theme = ["auto", "dark", "light"][i as usize].into());
+            app::apply_settings();
+            let dpi = ui(|u| u.dpi).unwrap_or(96);
+            let mut wr = RECT::default();
+            unsafe {
+                let _ = GetWindowRect(hwnd, &mut wr);
+            }
+            apply_dpi_and_theme(hwnd, dpi, Some(&wr));
+        }
+        Act::AutoUpdate => {
+            app::with(|a| a.settings.auto_update = !a.settings.auto_update);
+            app::apply_settings();
+        }
+        Act::CheckNow => {
+            if let Some(main) = app::with(|a| a.hwnd) {
+                update::check_now(main, true);
+            }
+        }
+        Act::Site => crate::util::open_url(SITE_URL),
+        Act::Github => crate::util::open_url(REPO_URL),
+        Act::Issues => crate::util::open_url(&format!("{REPO_URL}/issues")),
+        Act::Source(i) => {
+            let url = app::with(|a| a.active().and_then(|p| p.sources.get(i).map(|s| s.url.clone()))).flatten();
+            if let Some(u) = url {
+                crate::util::open_url(&u);
+            }
+        }
+        Act::HoldSlider | Act::ScaleSlider => {}
+    }
+    repaint();
+}
+
+unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    match msg {
+        WM_PAINT => {
+            paint(hwnd);
+            LRESULT(0)
+        }
+        WM_ERASEBKGND => LRESULT(1),
+        WM_MOUSEMOVE => {
+            let (x, y, a) = hit_at(lp);
+            let (changed, track, drag) = ui(|u| {
+                let changed = u.hover != a;
+                u.hover = a;
+                let track = !u.tracking;
+                u.tracking = true;
+                (changed, track, u.dragging)
+            })
+            .unwrap_or((false, false, None));
+            let _ = y;
+            if let Some((da, r)) = drag {
+                slider_value(da, (x - r.x) / r.w);
+                repaint();
+            } else if changed {
+                repaint();
+            }
+            if track {
+                let mut tme = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
+                let _ = TrackMouseEvent(&mut tme);
+            }
+            LRESULT(0)
+        }
+        0x02A3 /* WM_MOUSELEAVE */ => {
+            ui(|u| {
+                u.hover = None;
+                u.tracking = false;
+            });
+            repaint();
+            LRESULT(0)
+        }
+        WM_SETCURSOR if (lp.0 & 0xFFFF) as u32 == HTCLIENT => {
+            let hand = ui(|u| u.hover.is_some()).unwrap_or(false);
+            let _ = SetCursor(LoadCursorW(None, if hand { IDC_HAND } else { IDC_ARROW }).ok());
+            LRESULT(1)
+        }
+        WM_LBUTTONDOWN => {
+            let (x, _, a) = hit_at(lp);
+            let _ = SetFocus(Some(hwnd));
+            if let Some(a) = a {
+                let slider = matches!(a, Act::HoldSlider | Act::ScaleSlider);
+                let rect = ui(|u| {
+                    u.pressed = Some(a);
+                    u.hits.iter().find(|(_, h)| *h == a).map(|(r, _)| *r)
+                })
+                .flatten();
+                SetCapture(hwnd);
+                if slider {
+                    if let Some(r) = rect {
+                        // hit rect is the track widened by 10 DIP on each side
+                        let track = R::new(r.x + 10.0, r.y, r.w - 20.0, r.h);
+                        ui(|u| u.dragging = Some((a, track)));
+                        slider_value(a, (x - track.x) / track.w);
+                    }
+                }
+                repaint();
+            }
+            LRESULT(0)
+        }
+        WM_LBUTTONUP => {
+            let (_, _, a) = hit_at(lp);
+            let (pressed, drag) = ui(|u| (u.pressed.take(), u.dragging.take())).unwrap_or((None, None));
+            let _ = ReleaseCapture();
+            if drag.is_some() {
+                app::apply_settings();
+                repaint();
+            } else if let (Some(p), Some(a)) = (pressed, a) {
+                if p == a {
+                    act(a);
+                }
+            } else {
+                repaint();
+            }
+            LRESULT(0)
+        }
+        WM_MOUSEWHEEL => {
+            let delta = ((wp.0 >> 16) & 0xFFFF) as i16 as f32;
+            let mut pt = POINT { x: (lp.0 & 0xFFFF) as i16 as i32, y: ((lp.0 >> 16) & 0xFFFF) as i16 as i32 };
+            let _ = windows::Win32::Graphics::Gdi::ScreenToClient(hwnd, &mut pt);
+            let sc = scale();
+            let (x, y) = (pt.x as f32 / sc, pt.y as f32 / sc);
+            let step = -delta / 120.0 * 54.0 * 1.5;
+            ui(|u| {
+                let mut rc = RECT::default();
+                let _ = GetClientRect(hwnd, &mut rc);
+                let hd = (rc.bottom - rc.top) as f32 / sc;
+                if u.tab == Tab::Device && u.list_rect.contains(x, y) {
+                    u.list_scroll = (u.list_scroll + step).clamp(0.0, (u.list_h - u.list_rect.h).max(0.0));
+                } else if u.tab != Tab::Device {
+                    u.page_scroll = (u.page_scroll + step).clamp(0.0, (u.page_h - hd).max(0.0));
+                }
+            });
+            repaint();
+            LRESULT(0)
+        }
+        WM_COMMAND => {
+            let id = (wp.0 & 0xFFFF) as i32;
+            let code = ((wp.0 >> 16) & 0xFFFF) as u32;
+            if id == ID_SEARCH {
+                if code == EN_CHANGE {
+                    let h = ui(|u| u.search).unwrap_or_default();
+                    let mut buf = vec![0u16; 256];
+                    let n = GetWindowTextW(h, &mut buf);
+                    let q = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
+                    ui(|u| {
+                        u.query = q;
+                        u.list_scroll = 0.0;
+                    });
+                }
+                repaint(); // focus changes too (placeholder)
+            }
+            LRESULT(0)
+        }
+        WM_CTLCOLOREDIT => {
+            let Some((brush, pal)) = ui(|u| (u.search_brush, u.pal)) else { return DefWindowProcW(hwnd, msg, wp, lp) };
+            let hdc = HDC(wp.0 as _);
+            SetTextColor(hdc, colorref(pal.text));
+            SetBkColor(hdc, colorref(pal.control));
+            LRESULT(brush.0 as isize)
+        }
+        WM_KEYDOWN if wp.0 as u16 == VK_ESCAPE.0 => {
+            let _ = DestroyWindow(hwnd);
+            LRESULT(0)
+        }
+        WM_TIMER if wp.0 == TIMER_LEARN => {
+            finish_learning();
+            LRESULT(0)
+        }
+        WM_DPICHANGED => {
+            let dpi = (wp.0 & 0xFFFF) as u32;
+            ui(|u| u.icon = icon_source((64.0 * dpi as f32 / 96.0) as i32));
+            apply_dpi_and_theme(hwnd, dpi, Some(&*(lp.0 as *const RECT)));
+            LRESULT(0)
+        }
+        WM_SETTINGCHANGE => {
+            // Windows light/dark switch
+            let dpi = ui(|u| u.dpi).unwrap_or(96);
+            let mut wr = RECT::default();
+            let _ = GetWindowRect(hwnd, &mut wr);
+            apply_dpi_and_theme(hwnd, dpi, Some(&wr));
+            LRESULT(0)
+        }
+        WM_CLOSE => {
+            let _ = DestroyWindow(hwnd);
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            hook::set_learning(false);
+            let res = ui(|u| (u.search_font, u.search_brush));
+            UI.with(|u| {
+                if let Ok(mut u) = u.try_borrow_mut() {
+                    *u = None;
+                }
+            });
+            if let Some((f, b)) = res {
+                if !f.0.is_null() {
+                    let _ = DeleteObject(f.into());
+                }
+                if !b.0.is_null() {
+                    let _ = DeleteObject(b.into());
+                }
+            }
+            crate::overlay::shutdown();
+            app::update_tray_tip();
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+
+// ───────────────────────── helpers kept from the classic UI ─────────────────────────
+
+pub fn is_dialog_message(msg: &MSG) -> bool {
+    // Esc in the search box closes the window like everywhere else.
+    if msg.message == WM_KEYDOWN && msg.wParam.0 as u16 == VK_ESCAPE.0 {
+        if let Some((h, edit)) = ui(|u| (u.hwnd, u.search)) {
+            if msg.hwnd == edit {
+                unsafe {
+                    let _ = DestroyWindow(h);
+                }
+                return true;
+            }
+        }
+    }
+    false
+}
+
+pub fn refresh_update_status() {
+    repaint();
 }
 
 fn copy_to_clipboard(hwnd: HWND, text: &str) {
@@ -572,18 +1591,6 @@ fn open_profiles_folder() {
     }
 }
 
-// ───────────────────────── trigger tab ─────────────────────────
-
-fn update_hold_label() {
-    let ms = app::with(|a| a.settings.hold_ms).unwrap_or(900);
-    set_text(item(ID_HOLD_LABEL), &format!("{}{:.1}{}", t("Hold for ", "누르고 있을 시간: "), ms as f32 / 1000.0, t(" s", "초")));
-}
-
-fn update_scale_label() {
-    let sc = app::with(|a| a.settings.overlay_scale).unwrap_or(1.0);
-    set_text(item(ID_SCALE_LABEL), &format!("{}{}%", t("Size: ", "크기: "), (sc * 100.0).round()));
-}
-
 pub fn describe_key(vk: u32, scan: u32, ext: bool) -> String {
     let mut name = String::new();
     if scan != 0 {
@@ -603,16 +1610,12 @@ fn start_learning() {
         u.learning = true;
         u.learned = None;
         u.learn_saw = false;
+        u.learn_tone = 0;
+        u.learn_msg = t("Listening… hold Fn now.", "듣는 중… 지금 Fn 키를 누르고 있어 보세요.").into();
         u.hwnd
     }) else {
         return;
     };
-    unsafe {
-        let _ = EnableWindow(item(ID_USE_LEARNED), false);
-        let _ = EnableWindow(item(ID_LEARN), false);
-    }
-    set_color(ID_LEARN_STATUS, 0);
-    set_text(item(ID_LEARN_STATUS), t("Listening… hold Fn now.", "듣는 중… 지금 Fn 키를 누르고 있어 보세요."));
     hook::set_learning(true);
     unsafe {
         SetTimer(Some(hwnd), TIMER_LEARN, 5000, None);
@@ -627,7 +1630,7 @@ pub fn on_learn_key(up: bool, lp: isize) {
     let (vk, scan, flags) = ((lp & 0xFFFF) as u32, ((lp >> 16) & 0xFFFF) as u32, ((lp >> 32) & 0xFFFF_FFFF) as u32);
     let ext = flags & 0x01 != 0;
     let injected = flags & 0x10 != 0;
-    let Some(active) = ui(|u| {
+    let shown = ui(|u| {
         if !u.learning {
             return false;
         }
@@ -635,58 +1638,43 @@ pub fn on_learn_key(up: bool, lp: isize) {
         if u.learned.is_none() {
             u.learned = Some((vk, scan, ext));
         }
+        u.learn_msg = format!("{}{}{}", t("Received: ", "받은 신호: "), describe_key(vk, scan, ext), if injected { t(" (sent by software)", " (소프트웨어가 보낸 입력)") } else { "" });
         true
-    }) else {
-        return;
-    };
-    if active {
-        set_text(
-            item(ID_LEARN_STATUS),
-            &format!("{}{}{}", t("Received: ", "받은 신호: "), describe_key(vk, scan, ext), if injected { t(" (sent by software)", " (소프트웨어가 보낸 입력)") } else { "" }),
-        );
+    });
+    if shown == Some(true) {
+        repaint();
     }
 }
 
 fn finish_learning() {
     hook::set_learning(false);
-    let Some((hwnd, saw, learned)) = ui(|u| {
+    ui(|u| {
         u.learning = false;
-        (u.hwnd, u.learn_saw, u.learned)
-    }) else {
-        return;
-    };
-    unsafe {
-        let _ = KillTimer(Some(hwnd), TIMER_LEARN);
-        let _ = EnableWindow(item(ID_LEARN), true);
-    }
-    let status = item(ID_LEARN_STATUS);
-    match learned {
-        None if !saw => {
-            set_color(ID_LEARN_STATUS, WARN);
-            set_text(status, t(
-                "Nothing arrived — this laptop's Fn key doesn't reach Windows (normal for most models). Use Left Ctrl, right next to Fn.",
-                "아무 신호도 오지 않았어요. 이 노트북의 Fn 키는 Windows에 신호를 보내지 않아요(대부분 그래요). Fn 바로 옆의 왼쪽 Ctrl을 쓰세요.",
-            ));
+        unsafe {
+            let _ = KillTimer(Some(u.hwnd), TIMER_LEARN);
         }
-        Some((vk, scan, ext)) => {
-            // Typing keys would auto-repeat while held.
-            let risky = matches!(vk, 0x08 | 0x09 | 0x0D | 0x20) || (0x30..=0x5A).contains(&vk);
-            set_color(ID_LEARN_STATUS, if risky { WARN } else { GOOD });
-            set_text(
-                status,
-                &format!(
+        match u.learned {
+            None => {
+                u.learn_tone = 2;
+                u.learn_msg = t(
+                    "Nothing arrived — this laptop's Fn key doesn't reach Windows (normal for most models). Use Left Ctrl, right next to Fn.",
+                    "아무 신호도 오지 않았어요. 이 노트북의 Fn 키는 Windows에 신호를 보내지 않아요(대부분 그래요). Fn 바로 옆의 왼쪽 Ctrl을 쓰세요.",
+                )
+                .into();
+            }
+            Some((vk, scan, ext)) => {
+                let risky = is_typing_key(vk);
+                u.learn_tone = if risky { 2 } else { 1 };
+                u.learn_msg = format!(
                     "{}{}{}",
                     t("First key: ", "처음 받은 키: "),
                     describe_key(vk, scan, ext),
                     if risky { t(" — a typing key would repeat while held. Pick another key.", " — 글자 입력 키라 길게 누르면 계속 입력돼요. 다른 키를 고르세요.") } else { "" }
-                ),
-            );
-            unsafe {
-                let _ = EnableWindow(item(ID_USE_LEARNED), !risky);
+                );
             }
         }
-        None => {}
-    }
+    });
+    repaint();
 }
 
 fn use_learned() {
@@ -697,206 +1685,10 @@ fn use_learned() {
         a.settings.trigger_extended = ext;
     });
     app::apply_settings();
-    build();
-    select_tab(Tab::Trigger);
-}
-
-// ───────────────────────── about tab ─────────────────────────
-
-pub fn refresh_update_status() {
-    let status = app::with(|a| a.update_status.clone()).unwrap_or_default();
-    if ui(|_| ()).is_some() {
-        set_text(item(ID_UPDATE_STATUS), &status);
-    }
-}
-
-// ───────────────────────── messages ─────────────────────────
-
-pub fn is_dialog_message(msg: &MSG) -> bool {
-    let Some(h) = ui(|u| u.hwnd) else { return false };
-    unsafe { IsDialogMessageW(h, msg).as_bool() }
-}
-
-fn on_command(hwnd: HWND, id: i32, code: u32) {
-    match (id, code) {
-        (ID_COPY, BN_CLICKED) => {
-            let r = app::with(|a| a.device.report()).unwrap_or_default();
-            copy_to_clipboard(hwnd, &r);
-        }
-        (ID_REQUEST, BN_CLICKED) => request_model(),
-        (ID_AUTO, BN_CLICKED) => {
-            app::with(|a| a.settings.profile_mode = "auto".into());
-            app::apply_settings();
-            fill_list();
-            refresh_active();
-        }
-        (ID_MANUAL, BN_CLICKED) => {
-            app::with(|a| {
-                a.settings.profile_mode = "manual".into();
-                if a.db.find(&a.settings.manual_profile_id).is_none() {
-                    if let Some(c) = a.detection.candidates.first() {
-                        a.settings.manual_profile_id = a.db.profiles[c.index].id.clone();
-                    }
-                }
-            });
-            app::apply_settings();
-            fill_list();
-            refresh_active();
-        }
-        (ID_SEARCH, EN_CHANGE) => fill_list(),
-        (ID_LIST, LBN_SELCHANGE) => {
-            let sel = send(item(ID_LIST), LB_GETCURSEL, 0, 0);
-            let Some(Some(idx)) = ui(|u| u.rows.get(sel as usize).copied()) else { return };
-            app::with(|a| {
-                a.settings.profile_mode = "manual".into();
-                a.settings.manual_profile_id = a.db.profiles[idx].id.clone();
-            });
-            app::apply_settings();
-            refresh_active();
-        }
-        (ID_PREVIEW | ID_PREVIEW2, BN_CLICKED) => app::show_overlay(true),
-        (ID_FOLDER, BN_CLICKED) => open_profiles_folder(),
-        (ID_RELOAD, BN_CLICKED) => {
-            app::with(|a| a.reload_profiles());
-            app::update_tray_tip();
-            build();
-        }
-        (ID_TRIG_ENABLED, BN_CLICKED) => {
-            let on = checked(ID_TRIG_ENABLED);
-            app::with(|a| a.settings.trigger_enabled = on);
-            app::apply_settings();
-        }
-        (ID_SKIP_FS, BN_CLICKED) => {
-            let on = checked(ID_SKIP_FS);
-            app::with(|a| a.settings.skip_fullscreen = on);
-            app::apply_settings();
-        }
-        (ID_TRIG_KEY, CBN_SELCHANGE) => {
-            let sel = send(item(ID_TRIG_KEY), CB_GETCURSEL, 0, 0);
-            let vks = [VK_LCONTROL, VK_ANY_CTRL, VK_RSHIFT, VK_APPS];
-            if let Some(&vk) = vks.get(sel as usize) {
-                app::with(|a| {
-                    a.settings.trigger_vk = vk;
-                    a.settings.trigger_scan = 0;
-                    a.settings.trigger_extended = false;
-                });
-                app::apply_settings();
-            }
-        }
-        (ID_LEARN, BN_CLICKED) => start_learning(),
-        (ID_USE_LEARNED, BN_CLICKED) => use_learned(),
-        (ID_STARTUP, BN_CLICKED) => startup::set(checked(ID_STARTUP)),
-        (ID_LANG, CBN_SELCHANGE) => {
-            let sel = send(item(ID_LANG), CB_GETCURSEL, 0, 0) as usize;
-            let v = ["auto", "ko", "en"].get(sel).copied().unwrap_or("auto");
-            app::with(|a| a.settings.language = v.into());
-            app::apply_settings();
-            build();
-        }
-        (ID_THEME, CBN_SELCHANGE) => {
-            let sel = send(item(ID_THEME), CB_GETCURSEL, 0, 0) as usize;
-            let v = ["auto", "dark", "light"].get(sel).copied().unwrap_or("auto");
-            app::with(|a| a.settings.theme = v.into());
-            app::apply_settings();
-        }
-        (ID_AUTO_UPDATE, BN_CLICKED) => {
-            let on = checked(ID_AUTO_UPDATE);
-            app::with(|a| a.settings.auto_update = on);
-            app::apply_settings();
-        }
-        (ID_CHECK_NOW, BN_CLICKED) => {
-            if let Some(main) = app::with(|a| a.hwnd) {
-                update::check_now(main, true);
-            }
-        }
-        (ID_SITE, BN_CLICKED) => crate::util::open_url(SITE_URL),
-        (ID_GITHUB, BN_CLICKED) => crate::util::open_url(REPO_URL),
-        (ID_ISSUES, BN_CLICKED) => crate::util::open_url(&format!("{REPO_URL}/issues")),
-        (ID_SOURCES, LBN_DBLCLK) | (ID_OPEN_SOURCE, BN_CLICKED) => {
-            let sel = send(item(ID_SOURCES), LB_GETCURSEL, 0, 0);
-            let sel = if sel < 0 { 0 } else { sel as usize };
-            if let Some(Some(url)) = ui(|u| u.source_urls.get(sel).cloned()) {
-                crate::util::open_url(&url);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn on_hscroll(ctrl: HWND) {
-    let pos = send(ctrl, WM_USER /* TBM_GETPOS */, 0, 0) as i32;
-    if ctrl == item(ID_HOLD) {
-        app::with(|a| a.settings.hold_ms = (pos.clamp(3, 20) * 100) as u32);
-        update_hold_label();
-    } else if ctrl == item(ID_SCALE) {
-        app::with(|a| a.settings.overlay_scale = pos.clamp(7, 16) as f32 / 10.0);
-        update_scale_label();
-    }
-    app::apply_settings();
-}
-
-unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    match msg {
-        WM_COMMAND => {
-            on_command(hwnd, (wp.0 & 0xFFFF) as i32, ((wp.0 >> 16) & 0xFFFF) as u32);
-            LRESULT(0)
-        }
-        WM_NOTIFY => {
-            let hdr = &*(lp.0 as *const NMHDR);
-            if hdr.idFrom == ID_TAB as usize && hdr.code == TCN_SELCHANGE {
-                let sel = send(hdr.hwndFrom, TCM_GETCURSEL, 0, 0);
-                select_tab(match sel {
-                    1 => Tab::Trigger,
-                    2 => Tab::About,
-                    _ => Tab::Device,
-                });
-            }
-            LRESULT(0)
-        }
-        WM_HSCROLL => {
-            if lp.0 != 0 {
-                on_hscroll(HWND(lp.0 as _));
-            }
-            LRESULT(0)
-        }
-        WM_TIMER if wp.0 == TIMER_LEARN => {
-            finish_learning();
-            LRESULT(0)
-        }
-        WM_CTLCOLORSTATIC => {
-            let hdc = HDC(wp.0 as _);
-            let id = GetDlgCtrlID(HWND(lp.0 as _));
-            let c = ui(|u| u.colors.iter().find(|(i, _)| *i == id).map(|x| x.1)).flatten();
-            SetTextColor(hdc, COLORREF(c.unwrap_or(0)));
-            SetBkColor(hdc, COLORREF(GetSysColor(COLOR_WINDOW)));
-            LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize)
-        }
-        WM_DPICHANGED => {
-            let dpi = (wp.0 & 0xFFFF) as u32;
-            ui(|u| u.dpi = dpi);
-            resize_window(hwnd, dpi, Some(&*(lp.0 as *const RECT)));
-            build();
-            LRESULT(0)
-        }
-        WM_CLOSE => {
-            let _ = DestroyWindow(hwnd);
-            LRESULT(0)
-        }
-        WM_DESTROY => {
-            hook::set_learning(false);
-            let fonts = ui(|u| (u.font, u.bold));
-            UI.with(|u| {
-                if let Ok(mut u) = u.try_borrow_mut() {
-                    *u = None;
-                }
-            });
-            if let Some((a, b)) = fonts {
-                let _ = DeleteObject(HGDIOBJ(a.0));
-                let _ = DeleteObject(HGDIOBJ(b.0));
-            }
-            app::update_tray_tip();
-            LRESULT(0)
-        }
-        _ => DefWindowProcW(hwnd, msg, wp, lp),
-    }
+    ui(|u| {
+        u.learn_tone = 1;
+        u.learn_msg = format!("{} {}", t("Now using", "이제 이 키를 써요:"), describe_key(vk, scan, ext));
+        u.learned = None;
+    });
+    repaint();
 }

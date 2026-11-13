@@ -1,6 +1,6 @@
 [package]
 name = "fn-cheatsheet"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Hold a key to see what your laptop's Fn keys do (ASUS / Lenovo, Windows)"
 license = "MIT"
@@ -26,6 +26,7 @@ features = [
   "Win32_Graphics_Direct2D",
   "Win32_Graphics_Direct2D_Common",
   "Win32_Graphics_DirectWrite",
+  "Win32_Graphics_Dwm",
   "Win32_Graphics_Dxgi_Common",
   "Win32_Graphics_Gdi",
   "Win32_Graphics_Imaging",

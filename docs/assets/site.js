@@ -87,7 +87,7 @@
       (notes.length ? '<ul class="notes">' + notes.join("") + '</ul>' : '') +
       '<div class="label">' + T("Detected by", "자동 인식 기준") + '</div><div class="codes">' + esc(codes.join(" · ")) + '</div>' +
       '<div class="label">' + T("Sources", "출처") + '</div><ul class="srcs">' + (p.sources || []).map(function(s){
-        return '<li><a href="' + esc(safeUrl(s.url)) + '" target="_blank" rel="noopener noreferrer">' + esc(s.title || s.url) + '</a>' + (s.kind === "community" ? ' <span class="small">(' + T("community", "커뮤니티") + ')</span>' : '') + '</li>';
+        return '<li><a href="' + esc(safeUrl(s.url)) + '" target="_blank" rel="noopener noreferrer">' + esc(s.title || s.url) + '</a>' + (s.kind === "community" ? ' <span class="small">(' + T("community", "커뮤니티") + ')</span>' : s.kind === "device-test" ? ' <span class="small">(' + T("tested on a real device", "실기 확인") + ')</span>' : '') + '</li>';
       }).join("") + '</ul></div></details>';
   }
 
