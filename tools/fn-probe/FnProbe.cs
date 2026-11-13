@@ -30,18 +30,22 @@ static class FnProbe
     static readonly Stopwatch Clock = Stopwatch.StartNew();
     static readonly object Gate = new object();
     static string phase = "";
-    static readonly Dictionary<string, int> Hits = new Dictionary<string, int>();
+    static bool recording = true;
+    /// phase -> signature -> count. A signature identifies a source (device, WMI class, virtual key …).
+    static readonly Dictionary<string, Dictionary<string, int>> Hits = new Dictionary<string, Dictionary<string, int>>();
 
     static void Say(string s) { lock (Gate) { Console.WriteLine(s); Report.AppendLine(s); } }
-    static void Event(string channel, string text)
+    static void Event(string channel, string text, string sig)
     {
         lock (Gate)
         {
+            if (!recording) return;
             string line = string.Format("  {0,7:0.000}s [{1}] {2,-9} {3}", Clock.Elapsed.TotalSeconds, phase, channel, text);
             Console.WriteLine(line);
             Report.AppendLine(line);
-            string key = phase + "|" + channel;
-            int n; Hits.TryGetValue(key, out n); Hits[key] = n + 1;
+            Dictionary<string, int> d;
+            if (!Hits.TryGetValue(phase, out d)) Hits[phase] = d = new Dictionary<string, int>();
+            int n; d.TryGetValue(sig, out n); d[sig] = n + 1;
         }
     }
 
@@ -95,12 +99,12 @@ static class FnProbe
                 uint each = (uint)Marshal.ReadInt32(buf, hdr), count = (uint)Marshal.ReadInt32(buf, hdr + 4);
                 var bytes = new byte[Math.Min(64, each * count)];
                 Marshal.Copy(buf + hdr + 8, bytes, 0, bytes.Length);
-                Event("RAW HID", (dn ?? "?") + "  " + BitConverter.ToString(bytes));
+                Event("RAW HID", (dn ?? "?") + "  " + BitConverter.ToString(bytes), "HID " + (dn ?? "?") + (bytes.Length > 0 ? " report " + bytes[0] : ""));
             }
             else if (type == RIM_TYPEKEYBOARD)
             {
                 ushort make = (ushort)Marshal.ReadInt16(buf, hdr), fl = (ushort)Marshal.ReadInt16(buf, hdr + 2), vk = (ushort)Marshal.ReadInt16(buf, hdr + 6);
-                Event("RAW KBD", string.Format("make=0x{0:X2} flags=0x{1:X} vk=0x{2:X2}  {3}", make, fl, vk, dn ?? ""));
+                Event("RAW KBD", string.Format("make=0x{0:X2} flags=0x{1:X} vk=0x{2:X2}  {3}", make, fl, vk, dn ?? ""), string.Format("KEY vk=0x{0:X2} make=0x{1:X2}", vk, make));
             }
         }
         finally { Marshal.FreeHGlobal(buf); }
@@ -175,7 +179,7 @@ static class FnProbe
                         foreach (var prop in e.NewEvent.Properties)
                             if (!prop.Name.StartsWith("__") && prop.Name != "InstanceName" && prop.Name != "Active")
                                 parts.Add(prop.Name + "=" + FormatValue(prop.Value));
-                        Event("WMI", cls + " " + string.Join(" ", parts));
+                        Event("WMI", cls + " " + string.Join(" ", parts), "WMI " + cls + " " + string.Join(" ", parts));
                     };
                     w.Start();
                     Watchers.Add(w);
@@ -307,7 +311,7 @@ static class FnProbe
             foreach (var id in cands)
             {
                 Say(string.Format(T("  id 0x{0:X8}: {1}", "  id 0x{0:X8}: {1}"), id, ok[id] ? T("FOLLOWS Fn ✓", "Fn을 따라 바뀜 ✓") : T("does not follow Fn", "Fn과 무관")));
-                if (ok[id]) Event("ATK DSTS", string.Format("id 0x{0:X8} follows Fn: released 0x{1:X8}, held 0x{2:X8}", id, released[id], held[id]));
+                if (ok[id]) Event("ATK DSTS", string.Format("id 0x{0:X8} follows Fn: released 0x{1:X8}, held 0x{2:X8}", id, released[id], held[id]), "DSTS follows " + id);
             }
         }
     }
@@ -345,7 +349,7 @@ static class FnProbe
                 {
                     var kb = (KB)Marshal.PtrToStructure(l, typeof(KB));
                     int m = w.ToInt32();
-                    Event("LL HOOK", string.Format("{0} vk=0x{1:X2} scan=0x{2:X2} flags=0x{3:X}", m == 0x100 || m == 0x104 ? "down" : "up  ", kb.vk, kb.scan, kb.flags));
+                    Event("LL HOOK", string.Format("{0} vk=0x{1:X2} scan=0x{2:X2} flags=0x{3:X}", m == 0x100 || m == 0x104 ? "down" : "up  ", kb.vk, kb.scan, kb.flags), string.Format("KEY vk=0x{0:X2} make=0x{1:X2}", kb.vk, kb.scan));
                 }
                 return CallNextHookEx(IntPtr.Zero, c, w, l);
             };
@@ -375,23 +379,47 @@ static class FnProbe
         AsusScan();
         foreach (var w in Watchers) try { w.Stop(); } catch { }
 
-        // Verdict
+        // Verdict — computed from a snapshot taken after recording stopped (the listener thread keeps running).
+        Dictionary<string, Dictionary<string, int>> snap;
+        lock (Gate)
+        {
+            recording = false;
+            snap = Hits.ToDictionary(kv => kv.Key, kv => new Dictionary<string, int>(kv.Value));
+        }
+        Func<string, Dictionary<string, int>> P = name => { Dictionary<string, int> d; return snap.TryGetValue(name, out d) ? d : new Dictionary<string, int>(); };
+        var control = P("control"); var idle = P("idle"); var fn = P("fn"); var confirmHits = P("confirm");
+
         Say("");
         Say("== " + T("Summary", "요약") + " ==");
-        foreach (var p in new[] { "control", "idle", "fn", "fn+f", "confirm" })
+        foreach (var name in new[] { "control", "idle", "fn", "fn+f", "confirm" })
         {
-            var parts = Hits.Where(kv => kv.Key.StartsWith(p + "|")).Select(kv => kv.Key.Substring(p.Length + 1) + " ×" + kv.Value).ToList();
-            Say(string.Format("  {0,-8} {1}", p, parts.Count == 0 ? "—" : string.Join(", ", parts)));
+            var d = P(name);
+            Say(string.Format("  {0,-8} {1}", name, d.Count == 0 ? "—" : string.Join(", ", d.Select(kv => kv.Key + " ×" + kv.Value))));
         }
-        bool controlOk = Hits.Keys.Any(x => x.StartsWith("control|"));
-        int fnHits = Hits.Where(kv => kv.Key.StartsWith("fn|")).Sum(kv => kv.Value);
-        bool confirm = Hits.Keys.Any(x => x.StartsWith("confirm|"));
-        if (!controlOk) Say(T("  ✗ Even the A key wasn't seen — the probe isn't receiving input here (Remote Desktop? another window elevated?). Run it again at the laptop.",
-                              "  ✗ A 키조차 잡히지 않았어요. 여기서는 입력이 안 들어와요(원격 데스크톱? 관리자 권한 창?). 노트북 앞에서 다시 실행하세요."));
-        else if (fnHits > 0 || confirm) Say(T("  ✓ Something arrives when Fn is pressed alone — see the 'fn' lines above. Please send this report.",
-                                              "  ✓ Fn만 눌렀을 때 신호가 와요 — 위의 'fn' 줄을 보세요. 이 보고서를 보내 주세요."));
-        else Say(T("  ✗ Nothing arrives when Fn is pressed alone on any channel Windows offers. This laptop handles Fn inside the keyboard controller.",
-                   "  ✗ Fn만 눌렀을 때는 Windows가 볼 수 있는 어떤 경로로도 신호가 오지 않아요. 이 노트북은 Fn을 키보드 컨트롤러 안에서 처리해요."));
+        // The input check needs the A key itself (vk 0x41), not just any traffic.
+        bool controlOk = control.Keys.Any(k => k.StartsWith("KEY vk=0x41"));
+        // An Fn signal is a source that is new in the Fn phase (not in idle/control), or clearly busier than
+        // in the idle baseline (Fn phase is 12 s, idle 5 s).
+        var fnSignals = fn.Where(kv =>
+        {
+            int idleN; idle.TryGetValue(kv.Key, out idleN);
+            bool inControl = control.ContainsKey(kv.Key);
+            return (idleN == 0 && !inControl) || kv.Value > idleN * 12.0 / 5.0 * 3 + 2;
+        }).Select(kv => kv.Key).ToList();
+        bool dstsFollows = confirmHits.Keys.Any(k => k.StartsWith("DSTS follows"));
+
+        if (!controlOk)
+            Say(T("  ✗ The A key wasn't seen — input isn't reaching this session (Remote Desktop? an elevated window in front?). Run it again at the laptop.",
+                  "  ✗ A 키가 잡히지 않았어요. 이 세션에 입력이 안 들어와요(원격 데스크톱? 관리자 권한 창?). 노트북 앞에서 다시 실행하세요."));
+        else if (fnSignals.Count > 0 || dstsFollows)
+        {
+            Say(T("  ✓ Something follows the Fn key on its own. Please send this report:", "  ✓ Fn만 눌렀을 때 따라오는 신호가 있어요. 이 보고서를 보내 주세요:"));
+            foreach (var sig in fnSignals) Say("      " + sig);
+            if (dstsFollows) Say("      " + string.Join(", ", confirmHits.Keys.Where(k => k.StartsWith("DSTS follows"))));
+        }
+        else
+            Say(T("  ✗ Nothing follows the Fn key on any channel Windows offers. This laptop handles Fn inside the keyboard controller.",
+                  "  ✗ Fn만 눌렀을 때 Windows가 볼 수 있는 어떤 경로로도 신호가 오지 않아요. 이 노트북은 Fn을 키보드 컨트롤러 안에서 처리해요."));
 
         string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         string file = Path.Combine(desktop, "FnProbe-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt");

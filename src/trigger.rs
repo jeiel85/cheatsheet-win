@@ -3,7 +3,8 @@
 //!
 //! - Hold: the trigger held alone for `hold_ms` shows the sheet until it is released.
 //! - Double tap: two quick taps (each ≤ TAP_MAX ms, the second within TAP_GAP ms of the first release, nothing
-//!   else pressed or clicked in between) show the sheet until the next key press or click.
+//!   else pressed or clicked in between) show the sheet until the next key press or click. It is decided when
+//!   the second tap is *released*, so a long second press is a hold, never a double tap.
 //! - Any other key, any click or scroll, or moving the mouse more than MOVE_SLOP px cancels a pending hold.
 
 pub const TAP_MAX: u64 = 300;
@@ -48,11 +49,13 @@ pub struct Machine {
     tap_down_at: u64,
     tap_clean: bool,
     last_tap_up: u64,
+    /// The current press started within TAP_GAP of a clean tap: if it is a clean tap too, it's a double tap.
+    second: bool,
 }
 
 impl Default for Machine {
     fn default() -> Self {
-        Machine { state: State::Idle, trigger_down: false, deadline: 0, want_mouse: false, start: (0, 0), tap_down_at: 0, tap_clean: false, last_tap_up: 0 }
+        Machine { state: State::Idle, trigger_down: false, deadline: 0, want_mouse: false, start: (0, 0), tap_down_at: 0, tap_clean: false, last_tap_up: 0, second: false }
     }
 }
 
@@ -96,19 +99,9 @@ impl Machine {
                 self.tap_down_at = now;
                 self.tap_clean = true;
                 self.start = cursor;
-                if cfg.tap && self.state == State::Idle && self.last_tap_up != 0 && now.saturating_sub(self.last_tap_up) <= TAP_GAP {
-                    // Second tap.
-                    self.last_tap_up = 0;
-                    self.deadline = 0;
-                    if mouse_btn {
-                        self.state = State::Blocked;
-                        self.want_mouse = false;
-                        return None;
-                    }
-                    self.state = State::Sticky;
-                    self.want_mouse = true;
-                    return Some(Out::Show);
-                }
+                // A press right after a clean tap may become a double tap — decided on its release.
+                self.second = cfg.tap && self.state == State::Idle && self.last_tap_up != 0 && now.saturating_sub(self.last_tap_up) <= TAP_GAP;
+                self.last_tap_up = 0;
                 if self.state == State::Idle {
                     if cfg.hold {
                         self.state = State::Pending;
@@ -123,6 +116,20 @@ impl Machine {
             self.trigger_down = false;
             let was_showing = self.state == State::Showing;
             let tap = cfg.tap && self.tap_clean && self.state != State::Blocked && !was_showing && now.saturating_sub(self.tap_down_at) <= TAP_MAX;
+            let second = std::mem::take(&mut self.second);
+            if tap && second {
+                // Double tap.
+                self.last_tap_up = 0;
+                self.deadline = 0;
+                if mouse_btn {
+                    self.state = State::Idle;
+                    self.want_mouse = false;
+                    return None;
+                }
+                self.state = State::Sticky;
+                self.want_mouse = true;
+                return Some(Out::Show);
+            }
             self.state = State::Idle;
             if tap {
                 self.last_tap_up = now;
@@ -293,23 +300,23 @@ mod tests {
     #[test]
     fn double_tap_shows_sticky_until_next_key() {
         let (m, o) = run(BOTH, &[(0, Trig(true)), (80, Trig(false)), (230, Trig(true)), (310, Trig(false)), (2000, Tick), (3000, Other(true))]);
-        assert_eq!(o, vec![(230, Out::Show), (3000, Out::Hide)]);
+        assert_eq!(o, vec![(310, Out::Show), (3000, Out::Hide)]);
         assert_eq!(m.state, State::Idle);
     }
 
     #[test]
     fn double_tap_closed_by_click_or_trigger() {
         let (_, o) = run(DOUBLE, &[(0, Trig(true)), (80, Trig(false)), (230, Trig(true)), (310, Trig(false)), (1000, Click)]);
-        assert_eq!(o, vec![(230, Out::Show), (1000, Out::Hide)]);
+        assert_eq!(o, vec![(310, Out::Show), (1000, Out::Hide)]);
         let (m, o) = run(DOUBLE, &[(0, Trig(true)), (80, Trig(false)), (230, Trig(true)), (310, Trig(false)), (1000, Trig(true))]);
-        assert_eq!(o, vec![(230, Out::Show), (1000, Out::Hide)]);
+        assert_eq!(o, vec![(310, Out::Show), (1000, Out::Hide)]);
         assert_eq!(m.state, State::Blocked, "the closing press must not start a new tap or hold");
     }
 
     #[test]
     fn mouse_movement_does_not_close_sticky() {
         let (m, o) = run(BOTH, &[(0, Trig(true)), (80, Trig(false)), (230, Trig(true)), (310, Trig(false)), (500, Move(400, 400))]);
-        assert_eq!(o, vec![(230, Out::Show)]);
+        assert_eq!(o, vec![(310, Out::Show)]);
         assert_eq!(m.state, State::Sticky);
     }
 
@@ -365,12 +372,31 @@ mod tests {
     }
 
     #[test]
+    fn tap_then_long_press_is_not_a_double_tap() {
+        // double-only: a long second press shows nothing and leaves nothing open
+        let (m, o) = run(DOUBLE, &[(0, Trig(true)), (80, Trig(false)), (230, Trig(true)), (1500, Trig(false)), (2000, Tick)]);
+        assert!(o.is_empty());
+        assert_eq!(m.state, State::Idle);
+        // both: a long second press is a normal hold — shows, and hides on release
+        let (m, o) = run(BOTH, &[(0, Trig(true)), (80, Trig(false)), (230, Trig(true)), (1200, Tick), (1500, Trig(false))]);
+        assert_eq!(o, vec![(1130, Out::Show), (1500, Out::Hide)]);
+        assert_eq!(m.state, State::Idle);
+    }
+
+    #[test]
+    fn tap_then_shortcut_shows_nothing() {
+        // Ctrl tap, then Ctrl+C right after: no flash of the sheet
+        let (_, o) = run(BOTH, &[(0, Trig(true)), (80, Trig(false)), (230, Trig(true)), (260, Other(true)), (280, Other(false)), (310, Trig(false)), (2000, Tick)]);
+        assert!(o.is_empty());
+    }
+
+    #[test]
     fn third_tap_after_close_starts_fresh() {
         // double tap → sticky → closed by trigger press → release → a new double tap works again
         let (_, o) = run(
             BOTH,
             &[(0, Trig(true)), (80, Trig(false)), (230, Trig(true)), (310, Trig(false)), (1000, Trig(true)), (1080, Trig(false)), (1600, Tick), (2000, Trig(true)), (2080, Trig(false)), (2200, Trig(true)), (2280, Trig(false))],
         );
-        assert_eq!(o, vec![(230, Out::Show), (1000, Out::Hide), (2200, Out::Show)]);
+        assert_eq!(o, vec![(310, Out::Show), (1000, Out::Hide), (2280, Out::Show)]);
     }
 }
