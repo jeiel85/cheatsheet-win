@@ -1,0 +1,60 @@
+FnProbe — 2026-11-13 13:59:24
+  SystemManufacturer: ASUSTeK COMPUTER INC.
+  SystemProductName: ASUS EXPERTBOOK P1503CVA
+  SystemFamily: ASUS EXPERTBOOK
+  SystemVersion: 1.0
+  BaseBoardProduct: P1503CVA
+  BIOSVersion: P1503CVA.319
+
+원시 입력: 4개 컬렉션 등록 (OK)
+    HID page 0x000D/0x05 \\?\HID#ASUF1300&Col02#5&957b30f&0&0001
+    HID page 0xFF00/0x01 \\?\HID#ASUF1300&Col05#5&957b30f&0&0004
+    HID page 0xFF00/0xC7 \\?\HID#ASUF1300&Col04#5&957b30f&0&0003
+    HID page 0xFFB3/0x10 \\?\HID#INTC816&Col02#3&1535a34c&0&0001
+    HID page 0xFFB3/0x10 \\?\HID#INTC816&Col01#3&1535a34c&0&0000
+    keyboard \\?\ACPI#ATK3001#4&20ff6402&0
+    keyboard
+    keyboard
+제조사 WMI 이벤트 감시: AsusAtkWmiEvent
+    2.697s [] LL HOOK   down vk=0x0D scan=0x1C flags=0x0
+    2.701s [] RAW KBD   make=0x1C flags=0x0 vk=0x0D  keyboard \\?\ACPI#ATK3001#4&20ff6402&0
+== 1/4 글자 A를 두 번 누르세요 (키가 잡히는지 확인) ==
+    2.739s [control] LL HOOK   up   vk=0x0D scan=0x1C flags=0x80
+    2.740s [control] RAW KBD   make=0x1C flags=0x1 vk=0x0D  keyboard \\?\ACPI#ATK3001#4&20ff6402&0
+    4.258s [control] LL HOOK   down vk=0x41 scan=0x1E flags=0x0
+    4.259s [control] RAW KBD   make=0x1E flags=0x0 vk=0x41  keyboard \\?\ACPI#ATK3001#4&20ff6402&0
+    4.419s [control] LL HOOK   up   vk=0x41 scan=0x1E flags=0x80
+    4.420s [control] RAW KBD   make=0x1E flags=0x1 vk=0x41  keyboard \\?\ACPI#ATK3001#4&20ff6402&0
+    5.350s [control] LL HOOK   down vk=0x41 scan=0x1E flags=0x0
+    5.352s [control] RAW KBD   make=0x1E flags=0x0 vk=0x41  keyboard \\?\ACPI#ATK3001#4&20ff6402&0
+    5.570s [control] LL HOOK   up   vk=0x41 scan=0x1E flags=0x80
+    5.570s [control] RAW KBD   make=0x1E flags=0x1 vk=0x41  keyboard \\?\ACPI#ATK3001#4&20ff6402&0
+    6.403s [control] LL HOOK   down vk=0x41 scan=0x1E flags=0x0
+    6.404s [control] RAW KBD   make=0x1E flags=0x0 vk=0x41  keyboard \\?\ACPI#ATK3001#4&20ff6402&0
+    6.676s [control] LL HOOK   up   vk=0x41 scan=0x1E flags=0x80
+    6.678s [control] RAW KBD   make=0x1E flags=0x1 vk=0x41  keyboard \\?\ACPI#ATK3001#4&20ff6402&0
+    7.195s [control] LL HOOK   down vk=0x41 scan=0x1E flags=0x0
+    7.196s [control] RAW KBD   make=0x1E flags=0x0 vk=0x41  keyboard \\?\ACPI#ATK3001#4&20ff6402&0
+    7.305s [control] LL HOOK   up   vk=0x41 scan=0x1E flags=0x80
+    7.306s [control] RAW KBD   make=0x1E flags=0x1 vk=0x41  keyboard \\?\ACPI#ATK3001#4&20ff6402&0
+== 2/4 아무것도 누르지 마세요 (잡음 확인) ==
+== 3/4 Fn만 2초씩 꾹 누르기, 세 번 ==
+== 4/4 비교용으로 Fn+F(또는 Fn+F5 등)를 한 번 누르세요 ==
+   27.859s [fn+f] WMI       AsusAtkWmiEvent EventID=0x9D SECURITY_DESCRIPTOR=null TIME_CREATED=134390195925531341
+
+== ASUS ACPI 스캔 (읽기 전용 DSTS) ==
+  4864개 ID, 하나당 약 0.1 ms
+   36.049s [] LL HOOK   down vk=0x0D scan=0x1C flags=0x0
+   36.049s [] RAW KBD   make=0x1C flags=0x0 vk=0x0D  keyboard \\?\ACPI#ATK3001#4&20ff6402&0
+   36.104s [] LL HOOK   up   vk=0x0D scan=0x1C flags=0x80
+   36.104s [] RAW KBD   make=0x1C flags=0x1 vk=0x0D  keyboard \\?\ACPI#ATK3001#4&20ff6402&0
+  응답하는 값 53개, 저절로 바뀌는 값 1개(제외)
+  Fn을 누르는 동안 바뀐 값: 0개
+
+== 요약 ==
+  control  KEY vk=0x0D make=0x1C ×2, KEY vk=0x41 make=0x1E ×16
+  idle     —
+  fn       —
+  fn+f     WMI AsusAtkWmiEvent EventID=0x9D SECURITY_DESCRIPTOR=null TIME_CREATED=134390195925531341 ×1
+  confirm  —
+  ✗ Fn만 눌렀을 때 Windows가 볼 수 있는 어떤 경로로도 신호가 오지 않아요. 이 노트북은 Fn을 키보드 컨트롤러 안에서 처리해요.
