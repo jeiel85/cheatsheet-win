@@ -391,6 +391,13 @@ mod tests {
     }
 
     #[test]
+    fn hold_after_shortcut_and_tap_still_works() {
+        // The exact live-test sequence: Ctrl+Shift, a Ctrl tap, a pause, then a hold.
+        let (_, o) = run(BOTH, &[(0, Trig(true)), (20, Other(true)), (70, Other(false)), (100, Trig(false)), (200, Trig(true)), (280, Trig(false)), (1080, Trig(true)), (2400, Tick), (2500, Trig(false))]);
+        assert_eq!(o, vec![(1980, Out::Show), (2500, Out::Hide)]);
+    }
+
+    #[test]
     fn third_tap_after_close_starts_fresh() {
         // double tap → sticky → closed by trigger press → release → a new double tap works again
         let (_, o) = run(
