@@ -29,7 +29,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $tag = "${{ github.ref_name }}"
           $notes = "docs/release-notes/$tag.md"
-          $assets = @('dist/FnCheatsheet.exe', 'dist/FnCheatsheet.exe.sha256')
+          $assets = @('dist/FnCheatsheet.exe', 'dist/FnCheatsheet.exe.sha256', 'dist/FnProbe.exe', 'dist/FnProbe.exe.sha256')
           gh release view $tag *> $null
           $created = $LASTEXITCODE -ne 0
           if ($created) {

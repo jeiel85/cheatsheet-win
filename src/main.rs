@@ -18,6 +18,7 @@ mod overlay;
 mod selftest;
 mod settings;
 mod startup;
+mod trigger;
 mod ui;
 mod update;
 mod util;

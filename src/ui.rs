@@ -117,6 +117,8 @@ enum Act {
     LearnStart,
     LearnUse,
     Startup,
+    Style(u8),
+    Probe,
     Lang(u8),
     Theme(u8),
     ScaleSlider,
@@ -745,7 +747,7 @@ fn page_trigger(dc: &mut Dc, s: &Snap, u: &UiView, x0: f32, cw: f32, y0: f32) ->
         "ASUS·레노버 노트북 대부분은 Fn 키를 키보드 안에서 처리해서 Windows가 알 수 없어요. 그래서 바로 옆의 키를 길게 눌러요.",
     );
     let (_, ih) = dc.measure(info, 12.5, false, cw - 40.0, true);
-    let rows = 4.0;
+    let rows = 5.0;
     let c1 = R::new(x0, y, cw, 20.0 + ih + 16.0 + rows * 68.0);
     dc.card(c1);
     dc.glyph(G_INFO, x0 + 20.0, y + 21.0, 13.0, p.sub);
@@ -753,8 +755,23 @@ fn page_trigger(dc: &mut Dc, s: &Snap, u: &UiView, x0: f32, cw: f32, y0: f32) ->
     let mut ry = y + 20.0 + ih + 16.0;
     // row: enabled
     divider(dc, x0, cw, ry);
-    dc.row_text(x0 + 20.0, ry + 14.0, text_w, t("Show the sheet while I hold the key", "키를 길게 누르면 치트시트 보기"), t("Releasing it hides the sheet", "손을 떼면 사라져요"));
+    dc.row_text(x0 + 20.0, ry + 14.0, text_w, t("Show the sheet with a key", "키로 치트시트 보기"), t("Turn off to use only the tray icon", "끄면 트레이 아이콘으로만 열 수 있어요"));
     dc.toggle(x0 + cw - 20.0, ry + 34.0, s.s.trigger_enabled, Act::TriggerEnabled);
+    ry += 68.0;
+    // row: style
+    divider(dc, x0, cw, ry);
+    let style = s.s.trigger_style.as_str();
+    let style_desc = match style {
+        "double" => t("Tap twice quickly; stays until the next key or click", "빠르게 두 번 누르면 떠서, 다른 키나 클릭까지 유지돼요"),
+        "both" => t("Hold it, or tap twice quickly", "길게 누르거나, 빠르게 두 번 눌러요"),
+        _ => t("Shows while held, hides when released", "누르고 있는 동안 보이고, 떼면 사라져요"),
+    };
+    dc.row_text(x0 + 20.0, ry + 14.0, cw - 400.0, t("How", "트리거 방식"), style_desc);
+    dc.segmented(
+        x0 + cw - 20.0,
+        ry + 34.0,
+        &[(t("Hold", "길게 누르기"), Act::Style(0), style == "hold"), (t("Double tap", "두 번 누르기"), Act::Style(1), style == "double"), (t("Both", "둘 다"), Act::Style(2), style == "both")],
+    );
     ry += 68.0;
     // row: key
     divider(dc, x0, cw, ry);
@@ -785,10 +802,11 @@ fn page_trigger(dc: &mut Dc, s: &Snap, u: &UiView, x0: f32, cw: f32, y0: f32) ->
     let c2 = R::new(x0, y, cw, 118.0 + if mh > 0.0 { mh + 12.0 } else { 0.0 });
     dc.card(c2);
     dc.text(t("Does my Fn key send anything?", "내 Fn 키가 신호를 보내나요?"), x0 + 20.0, y + 16.0, 14.0, true, p.text, cw - 40.0, false, Align::Left);
-    dc.text(t("Press Start, then hold Fn alone for two seconds. If anything arrives you can use it as the key.", "시작을 누르고 Fn 키만 2초 동안 눌러 보세요. 신호가 오면 그 키를 누를 키로 쓸 수 있어요."), x0 + 20.0, y + 38.0, 12.5, false, p.sub, cw - 40.0, true, Align::Left);
+    dc.text(t("Press Start, then hold Fn alone for two seconds. This checks key events only; FnProbe also checks HID, vendor WMI and (ASUS) ACPI.", "시작을 누르고 Fn 키만 2초 동안 눌러 보세요. 여기서는 키 신호만 봐요. FnProbe는 HID·제조사 WMI·(ASUS) ACPI까지 확인해요."), x0 + 20.0, y + 38.0, 12.5, false, p.sub, cw - 40.0, true, Align::Left);
     let bx = x0 + 20.0;
     let w1 = dc.button(bx, y + 70.0, if u.learning { t("Listening…", "듣는 중…") } else { t("Start", "시작") }, Some(G_KEYBOARD), Act::LearnStart, 1, !u.learning);
-    dc.button(bx + w1 + 8.0, y + 70.0, t("Use this key", "이 키로 쓰기"), None, Act::LearnUse, 0, u.learn_ready);
+    let w2 = dc.button(bx + w1 + 8.0, y + 70.0, t("Use this key", "이 키로 쓰기"), None, Act::LearnUse, 0, u.learn_ready);
+    dc.button(bx + w1 + w2 + 16.0, y + 70.0, t("Deep check (FnProbe)", "정밀 진단 (FnProbe)"), Some(G_LINK), Act::Probe, 2, true);
     if mh > 0.0 {
         let tone = match u.learn_tone {
             1 => p.good,
@@ -1322,6 +1340,11 @@ fn act(a: Act) {
         Act::LearnStart => start_learning(),
         Act::LearnUse => use_learned(),
         Act::Startup => startup::set(!startup::is_enabled()),
+        Act::Probe => crate::util::open_url(&format!("{REPO_URL}/releases/latest/download/FnProbe.exe")),
+        Act::Style(i) => {
+            app::with(|a| a.settings.trigger_style = ["hold", "double", "both"][i as usize].into());
+            app::apply_settings();
+        }
         Act::Lang(i) => {
             app::with(|a| a.settings.language = ["auto", "ko", "en"][i as usize].into());
             app::apply_settings();

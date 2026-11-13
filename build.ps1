@@ -40,6 +40,18 @@ if (-not $SkipTests) {
     Write-Host ($text.Trim() -split "`n" | Select-Object -Last 3)
 }
 
+# FnProbe: the standalone Fn-signal diagnostic (C#, .NET Framework — built with the csc that ships with Windows).
+$csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+if (Test-Path $csc) {
+    $probe = Join-Path $dist 'FnProbe.exe'
+    & $csc -nologo -platform:x64 -optimize -r:System.Management.dll -r:System.Windows.Forms.dll "-out:$probe" (Join-Path $PSScriptRoot 'tools\fn-probe\FnProbe.cs')
+    if ($LASTEXITCODE -ne 0) { throw "FnProbe build failed ($LASTEXITCODE)" }
+    $ph = (Get-FileHash $probe -Algorithm SHA256).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText("$probe.sha256", "$ph  FnProbe.exe`n")
+} else {
+    Write-Warning 'csc.exe not found: FnProbe.exe not built'
+}
+
 $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText("$exe.sha256", "$hash  FnCheatsheet.exe`n")
 $kb = [math]::Round((Get-Item $exe).Length / 1KB)
