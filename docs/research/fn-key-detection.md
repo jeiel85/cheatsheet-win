@@ -1,4 +1,4 @@
-> Research notes behind Fn Cheatsheet's design (2026-11-13). Section 2.3 was written for the first WPF prototype; the shipping app is Rust + Win32 and implements the same algorithm in `src/hook.rs`.
+> Research notes behind Fn Cheatsheet's design (2026-11-13). Section 2.3 was written for the first WPF prototype; the shipping app is Rust + Win32 and implements it in `src/trigger.rs` (rules, unit-tested) and `src/hook.rs` (hooks). Section 6 has measurements on real hardware.
 
 # cheatsheet-win: technical research (Fn detection, trigger design, model ID, prior art)
 
@@ -13,7 +13,7 @@ Researched 2026-11-13. Labels used below:
 
 ## 0. Bottom line
 
-1. **On the target laptops, Fn pressed alone is not observable from Windows user mode.** No documented scancode, HID usage, or ACPI/WMI event reports a bare Fn press on ASUS or Lenovo. The only exception found is a Linux driver comment about one 2011 ThinkPad (E420), marked "TO BE VERIFIED" (see 1.2). Design on the assumption that Fn cannot be seen.
+1. **On the target laptops, Fn pressed alone is not observable from Windows user mode.** No documented scancode, HID usage, or ACPI/WMI event reports a bare Fn press on ASUS or Lenovo. The only exception found is a Linux driver comment about one 2011 ThinkPad (E420), marked "TO BE VERIFIED" (see 1.2). Design on the assumption that Fn cannot be seen. **Confirmed by measurement on an ASUS ExpertBook P1503CVA: no signal on any channel (§6.1).**
 2. **Many Fn+key combinations are observable**, through three different channels:
    - normal keyboard scancodes, which a `WH_KEYBOARD_LL` hook sees;
    - vendor ACPI/WMI events, which reach WMI or a vendor driver;
@@ -316,9 +316,45 @@ There is **no open dataset of per-model Fn-key legends** (what is printed on F1�
 
 ---
 
-## 5. Suggested verification on real hardware (not done here)
+## 5. Suggested verification on real hardware (see §6 for what was measured)
 
 1. Run a tiny LL-hook + Raw Input logger. Press Fn alone, Fn+Esc, and Fn+each F-key on each test model, with Fn-lock on and off. Record VK, scancode, flags, and which device (Raw Input `hDevice`).
 2. ASUS: subscribe to `AsusAtkWmiEvent` non-elevated and confirm events arrive. Toggle Fn+Esc and re-read `FnSwitch` and `Customization.ini [FunctionKeyLock]` to confirm their meaning.
 3. Lenovo consumer: try `\\.\EnergyDrv` IOCTL 0x831020E8 and `LENOVO_UTILITY_EVENT` without elevation.
 4. ThinkPad: dump `Lenovo_BiosSetting` to get the exact Fn-related setting names, and check whether reading them needs admin.
+
+---
+
+## 6. Measured on real hardware
+
+Measured with [FnProbe](../../tools/fn-probe/FnProbe.cs), the read-only diagnostic that ships with each release. It listens on every channel a user-mode Windows app can reach while the user follows prompts: press A (control), touch nothing (idle baseline), hold Fn alone three times, press an Fn combination once. On ASUS it also compares the ATKACPI `DSTS` status values with Fn held and released, then repeats hold/release twice to confirm any candidate. A signal counts only if it is new in the Fn phase or clearly above the idle baseline.
+
+### 6.1 ASUS ExpertBook P1503CVA — no Fn signal on any channel (2026-11-13)
+
+| | |
+|---|---|
+| Model | ASUS ExpertBook P1 15" P1503CVA, BIOS P1503CVA.319 |
+| OS | Windows 11 build 26300 (26H2), non-elevated |
+| Keyboard | `ACPI\ATK3001` (PS/2-type, i8042) |
+| Other HID | touchpad `ASUF1300` (digitizer 0x0D/0x05, vendor 0xFF00/0x01, 0xFF00/0xC7); Intel `INTC816` (0xFFB3/0x10) |
+| Tool | FnProbe v0.1.4, **local console session** at the laptop |
+| Raw report | [measurements/asus-expertbook-p1503cva-2026-11-13.txt](measurements/asus-expertbook-p1503cva-2026-11-13.txt) |
+
+| Channel | Control (A key) | Fn held alone (3 × 2 s) | Fn + F |
+|---|---|---|---|
+| `WH_KEYBOARD_LL` hook | ✅ vk 0x41, scan 0x1E | **nothing** | — |
+| Raw Input, keyboard `ATK3001` | ✅ make 0x1E | **nothing** | — |
+| Raw Input, vendor HID pages (0xFF00, 0xFFB3) | registered | **nothing** | — |
+| ASUS WMI `AsusAtkWmiEvent` | — | **nothing** | ✅ `EventID=0x9D` |
+| ATKACPI `DSTS`, 53 answering IDs | answers | **no value changed** | — |
+
+Conclusion: on this model the Fn key is handled entirely inside the keyboard controller. Fn alone produces no scancode, no HID report, no WMI event and no ACPI state change that Windows software can see. Only the *result* of an Fn combination reaches Windows: Fn+F emits ASUS WMI event 0x9D (fan profile). **An app therefore cannot use "hold Fn" as a trigger on this laptop.** Fn Cheatsheet uses Left Ctrl (hold or double tap) instead, because it sits right next to Fn.
+
+Notes from the measurement runs:
+- `DSTS` id `0x00110013` (CPU fan) changes by itself every second or so. FnProbe excludes it as drift, and the hold/release confirmation rejects it when it changes by chance during a hold.
+- Runs inside a **Remote Desktop** session are only partly valid. The keyboard hook and Raw Input see the RDP client's keyboard, not the laptop's. WMI events and ACPI values are hardware-wide and still count; Fn+F on the laptop keyboard produced the same `0x9D` event there. Since v0.1.4, FnProbe says so in its verdict.
+- FnProbe v0.1.3 had a bug: the window receiving `WM_INPUT` was garbage-collected, so its Raw Input channel recorded nothing. Reports from v0.1.3 do not cover the HID channel. The run above used the fixed v0.1.4.
+
+### 6.2 Lenovo — pending
+
+A Lenovo run is planned with the same procedure. Lenovo routes hotkeys differently (`thinkpad_acpi` HKEY events, `LENOVO_UTILITY_EVENT`, `\.\EnergyDrv`), so the result may differ from ASUS.

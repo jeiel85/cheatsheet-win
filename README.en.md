@@ -49,10 +49,21 @@ The Mac has CheatSheet (hold <kbd>⌘</kbd> to see shortcuts). Windows laptops h
 
 ## 🤷 Why Ctrl and not Fn?
 
-On almost every ASUS and Lenovo laptop the Fn key is **handled inside the keyboard controller (EC)**.
-Pressed alone it sends **nothing to Windows**, so no app can tell that it's being held.
+The Fn key isn't designed to signal Windows. On almost every ASUS and Lenovo laptop it is **handled entirely inside the keyboard controller (EC)**; Windows only receives the **result of a combination** such as Fn+F5. So **holding Fn cannot open this app**. It isn't an officially supported function, and no app can tell that Fn alone is being held.
 
-- So the default trigger is **Left Ctrl, right next to Fn**.
+We measured it: on an ASUS ExpertBook P1503CVA, [FnProbe](#-does-my-fn-key-really-send-nothing--fnprobe) checked all five channels Windows offers:
+
+| Channel | Fn held alone |
+|---|---|
+| Keyboard hook (scan codes) | no signal |
+| Raw input (built-in keyboard) | no signal |
+| Vendor-specific HID pages | no signal |
+| ASUS WMI events | no signal (an event arrives only for Fn+F) |
+| ASUS ACPI status values (53) | no change |
+
+Method and the raw report: [research notes §6](docs/research/fn-key-detection.md#6-measured-on-real-hardware). A Lenovo measurement is planned.
+
+- So the default trigger is **Left Ctrl, right next to Fn** — hold it, or tap it twice.
 - ThinkPads can **swap Fn and Ctrl** in BIOS or Lenovo Vantage.
 - If your Fn key *does* send a signal, use **Settings → Trigger & display → Capture** to make Fn itself the trigger — the same screen tells you whether anything arrives.
 - Clicking the tray icon shows the sheet any time.
