@@ -87,23 +87,23 @@ fn score(dev: &DeviceInfo, p: &Profile) -> Option<(u32, String)> {
     if dev.product.len() >= 4 && dev.product.is_char_boundary(4) {
         let mtm = &dev.product[..4];
         if m.mtm.iter().any(|t| t.trim().eq_ignore_ascii_case(mtm)) {
-            return Some((100, format!("machine type {}", mtm.to_ascii_uppercase())));
+            return Some((100, format!("{} {}", crate::i18n::t("machine type", "머신 타입"), mtm.to_ascii_uppercase())));
         }
     }
     for frag in &m.product {
         if code_match(&dev.baseboard, frag) {
-            return Some((90, format!("model code \"{}\"", dev.baseboard)));
+            return Some((90, format!("{} {}", crate::i18n::t("model code", "모델 코드"), dev.baseboard)));
         }
         if code_match(&dev.product, frag) {
-            return Some((90, format!("model code \"{}\"", dev.product)));
+            return Some((90, format!("{} {}", crate::i18n::t("model code", "모델 코드"), dev.product)));
         }
     }
     for rx in &m.family {
         if is_match(&dev.version, rx) {
-            return Some((80, format!("model name \"{}\"", dev.version)));
+            return Some((80, format!("{} {}", crate::i18n::t("model name", "모델명"), dev.version)));
         }
         if is_match(&dev.family, rx) {
-            return Some((80, format!("model name \"{}\"", dev.family)));
+            return Some((80, format!("{} {}", crate::i18n::t("model name", "모델명"), dev.family)));
         }
     }
     None

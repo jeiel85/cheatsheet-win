@@ -7,6 +7,8 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::System::SystemInformation::GetTickCount64;
+use windows::Win32::System::Threading::INFINITE;
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -45,11 +47,12 @@ struct HookState {
     state: State,
     trigger_down: bool,
     start: POINT,
-    timer: usize,
+    /// GetTickCount64() at which a pending hold becomes "show" (0 = none).
+    deadline: u64,
 }
 
 thread_local! {
-    static ST: RefCell<HookState> = const { RefCell::new(HookState { kb: None, mouse: None, state: State::Idle, trigger_down: false, start: POINT { x: 0, y: 0 }, timer: 0 }) };
+    static ST: RefCell<HookState> = const { RefCell::new(HookState { kb: None, mouse: None, state: State::Idle, trigger_down: false, start: POINT { x: 0, y: 0 }, deadline: 0 }) };
 }
 
 fn post_main(msg: u32, wp: usize, lp: isize) {
@@ -106,7 +109,29 @@ fn thread_main() {
         let _ = PeekMessageW(&mut msg, None, WM_USER, WM_USER, PM_NOREMOVE);
         THREAD_ID.store(windows::Win32::System::Threading::GetCurrentThreadId(), Ordering::Relaxed);
         ensure_keyboard_hook();
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+        // No SetTimer: thread-timer WM_TIMERs are synthesized opportunistically and were observed to stop
+        // arriving. The hold deadline is the wait timeout instead, which is exact and can't be starved.
+        loop {
+            let deadline = ST.with(|st| st.borrow().deadline);
+            let wait = if deadline == 0 { INFINITE } else { deadline.saturating_sub(GetTickCount64()).min(u32::MAX as u64 - 1) as u32 };
+            MsgWaitForMultipleObjectsEx(None, wait, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            // Hook callbacks (sent messages) run inside PeekMessage.
+            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                if msg.message == WM_QUIT {
+                    return;
+                }
+                handle(&msg);
+            }
+            let deadline = ST.with(|st| st.borrow().deadline);
+            if deadline != 0 && GetTickCount64() >= deadline {
+                on_hold_elapsed();
+            }
+        }
+    }
+}
+
+fn handle(msg: &MSG) {
+    unsafe {
             match msg.message {
                 WM_APP_RECONFIG => {
                     reset();
@@ -122,13 +147,11 @@ fn thread_main() {
                     });
                     ensure_keyboard_hook();
                 }
-                WM_TIMER if msg.hwnd.0.is_null() => on_hold_elapsed(msg.wParam.0),
                 _ => {
-                    let _ = TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
+                    let _ = TranslateMessage(msg);
+                    DispatchMessageW(msg);
                 }
             }
-        }
     }
 }
 
@@ -229,16 +252,13 @@ fn begin_pending(st: &mut HookState) {
         if st.mouse.is_none() {
             st.mouse = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), Some(module()), 0).ok();
         }
-        st.timer = SetTimer(None, 0, CFG_HOLD.load(Ordering::Relaxed), None);
+        st.deadline = GetTickCount64() + CFG_HOLD.load(Ordering::Relaxed) as u64;
     }
 }
 
 fn stop_pending(st: &mut HookState) {
     unsafe {
-        if st.timer != 0 {
-            let _ = KillTimer(None, st.timer);
-            st.timer = 0;
-        }
+        st.deadline = 0;
         if let Some(h) = st.mouse.take() {
             let _ = UnhookWindowsHookEx(h);
         }
@@ -273,19 +293,10 @@ fn mouse_button_down() -> bool {
     [0x01, 0x02, 0x04, 0x05, 0x06].iter().any(|&vk| unsafe { GetAsyncKeyState(vk) } as u16 & 0x8000 != 0)
 }
 
-fn on_hold_elapsed(timer: usize) {
+fn on_hold_elapsed() {
     ST.with(|st| {
         let mut st = st.borrow_mut();
-        if timer != st.timer {
-            unsafe {
-                let _ = KillTimer(None, timer);
-            }
-            return;
-        }
-        unsafe {
-            let _ = KillTimer(None, st.timer);
-        }
-        st.timer = 0;
+        st.deadline = 0;
         if st.state != State::Pending || !st.trigger_down {
             return;
         }
@@ -319,10 +330,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESU
             }
             if cancel {
                 let was_showing = st.state == State::Showing;
-                if st.timer != 0 {
-                    let _ = KillTimer(None, st.timer);
-                    st.timer = 0;
-                }
+                st.deadline = 0;
                 st.state = State::Blocked;
                 post_self(WM_APP_DROP_MOUSE);
                 if was_showing {
