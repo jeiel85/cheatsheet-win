@@ -5,11 +5,13 @@
 //!   FnCheatsheet.exe --selftest <match-tests.json> [--out <file>]
 //!   FnCheatsheet.exe --render <profile-id|unknown> <out.png> [ko|en] [dark|light]
 //!   FnCheatsheet.exe --device           print this PC's model strings and the match result
+//!   FnCheatsheet.exe --foreground [sec] wait, then print whether the window in front counts as full screen
 #![windows_subsystem = "windows"]
 
 mod app;
 mod data;
 mod device;
+mod fullscreen;
 mod glyphs;
 mod hook;
 mod i18n;
@@ -33,7 +35,7 @@ use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW};
 
 fn console_command(args: &[String]) -> Option<i32> {
     let cmd = args.first()?.as_str();
-    if !matches!(cmd, "--selftest" | "--render" | "--device") {
+    if !matches!(cmd, "--selftest" | "--render" | "--device" | "--foreground") {
         return None;
     }
     unsafe {
@@ -52,6 +54,18 @@ fn console_command(args: &[String]) -> Option<i32> {
                 lines.extend(report);
                 (fails > 0) as i32
             }
+        }
+        "--foreground" => {
+            let secs = args.get(1).and_then(|a| a.parse::<u64>().ok()).unwrap_or(0).min(60);
+            std::thread::sleep(std::time::Duration::from_secs(secs));
+            match fullscreen::foreground() {
+                Some(s) => lines.push(format!("{s:?}
+covers monitor: {}", fullscreen::covers_monitor(&s))),
+                None => lines.push("no foreground window".into()),
+            }
+            lines.push(format!("shell reports full screen: {}", fullscreen::shell_reports()));
+            lines.push(format!("full screen app in front: {}", fullscreen::app_in_front()));
+            0
         }
         "--device" => {
             let dev = device::DeviceInfo::read();

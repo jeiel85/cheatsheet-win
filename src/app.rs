@@ -129,7 +129,7 @@ pub fn show_overlay(pinned: bool) {
     }) else {
         return;
     };
-    if !pinned && skip_fs && fullscreen_app_in_front() {
+    if !pinned && skip_fs && crate::fullscreen::app_in_front() {
         return;
     }
     let model = OverlayModel { profile: profile.as_ref(), status, device_label: label, ambiguous };
@@ -151,14 +151,6 @@ pub fn hide_overlay() {
             }
         }
     });
-}
-
-/// A full-screen game, video or presentation is in front: holding Ctrl there (crouch!) must not cover it.
-fn fullscreen_app_in_front() -> bool {
-    match unsafe { SHQueryUserNotificationState() } {
-        Ok(s) => s == QUNS_BUSY || s == QUNS_RUNNING_D3D_FULL_SCREEN || s == QUNS_PRESENTATION_MODE,
-        Err(_) => false,
-    }
 }
 
 // ───────────────────────── tray ─────────────────────────

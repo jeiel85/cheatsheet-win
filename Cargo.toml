@@ -1,6 +1,6 @@
 [package]
 name = "fn-cheatsheet"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "Hold a key to see what your laptop's Fn keys do (ASUS / Lenovo, Windows)"
 license = "MIT"
