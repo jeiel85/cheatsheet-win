@@ -46,9 +46,13 @@ jobs:
           foreach ($a in 'FnCheatsheet.exe', 'FnCheatsheet.exe.sha256') {
             if ($names -notcontains $a) { throw "missing asset $a" }
           }
-          # Only a release this run created is published (and becomes "latest"); re-running an old tag
-          # just refreshes its assets and must not move "latest" backwards.
-          if ($created) {
-            gh release edit $tag --draft=false --latest
+          # Publish if the release is still a draft — created by this run, or left behind by a failed run.
+          # It becomes "latest" only if it is newer than the current latest, so re-running an old tag never
+          # moves "latest" backwards. Already-published releases only get their assets refreshed.
+          $isDraft = (gh release view $tag --json isDraft -q '.isDraft') -eq 'true'
+          if ($isDraft) {
+            $current = gh release view --json tagName -q '.tagName' 2>$null
+            $makeLatest = $LASTEXITCODE -ne 0 -or -not $current -or ([version]$tag.TrimStart('v') -gt [version]$current.TrimStart('v'))
+            gh release edit $tag --draft=false "--latest=$($makeLatest.ToString().ToLower())"
             if ($LASTEXITCODE -ne 0) { throw "publish failed" }
           }
