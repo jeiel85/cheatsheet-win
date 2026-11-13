@@ -11,7 +11,7 @@ use serde::Deserialize;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Networking::WinHttp::*;
 use windows::Win32::Security::Cryptography::{BCryptHash, BCRYPT_SHA256_ALG_HANDLE};
-use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH};
+use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, MoveFileExW, VerQueryValueW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, VS_FIXEDFILEINFO};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyWindow, KillTimer, PostMessageW, SetTimer};
 
 use crate::app::{self, WM_APP_UPDATE_DONE};
@@ -20,6 +20,7 @@ use crate::util::{exe_path, log, unix_now, w, APP_VERSION, REPO};
 
 pub const TIMER_FIRST: usize = 2;
 const DAY: u64 = 24 * 60 * 60;
+const RETRY_AFTER: u64 = 3 * 60 * 60;
 const MAX_EXE: usize = 30 * 1024 * 1024;
 const ASSET: &str = "FnCheatsheet.exe";
 
@@ -106,7 +107,11 @@ pub fn on_done(hwnd: HWND, lp: LPARAM) {
     app::with(|a| {
         a.update_busy = false;
         a.update_status = status.clone();
-        a.settings.last_update_check = unix_now();
+        // A failed check (offline, GitHub hiccup) is retried in about 3 hours instead of tomorrow.
+        a.settings.last_update_check = match done.outcome {
+            Outcome::Failed(_) => unix_now().saturating_sub(DAY - RETRY_AFTER),
+            _ => unix_now(),
+        };
         a.settings.save();
     });
     crate::ui::refresh_update_status();
@@ -254,7 +259,35 @@ fn check_and_download_inner() -> Result<Outcome, String> {
 
     let new = exe_path().with_extension("exe.new");
     fs::write(&new, &exe).map_err(|e| format!("{} ({e})", t("cannot write next to the app", "앱 폴더에 쓸 수 없어요")))?;
-    Ok(Outcome::Ready { version: latest_s, path: new })
+    // The exe must say it is the version the release claims (no mislabelled or downgraded binaries).
+    match file_version(&new) {
+        Some(v) if v == latest => Ok(Outcome::Ready { version: latest_s, path: new }),
+        other => {
+            let _ = fs::remove_file(&new);
+            Err(format!("version mismatch: release {latest_s}, file {}", other.map(|v| format!("{}.{}.{}", v.0, v.1, v.2)).unwrap_or_else(|| "unknown".into())))
+        }
+    }
+}
+
+/// FILEVERSION major.minor.patch from the exe's version resource.
+fn file_version(path: &std::path::Path) -> Option<(u32, u32, u32)> {
+    unsafe {
+        let p = w(&path.display().to_string());
+        let size = GetFileVersionInfoSizeW(p.pcwstr(), None);
+        if size == 0 {
+            return None;
+        }
+        let mut buf = vec![0u8; size as usize];
+        GetFileVersionInfoW(p.pcwstr(), None, size, buf.as_mut_ptr() as _).ok()?;
+        let mut ptr = std::ptr::null_mut();
+        let mut len = 0u32;
+        let root = w("\\");
+        if !VerQueryValueW(buf.as_ptr() as _, root.pcwstr(), &mut ptr, &mut len).as_bool() || (len as usize) < std::mem::size_of::<VS_FIXEDFILEINFO>() {
+            return None;
+        }
+        let fi = &*(ptr as *const VS_FIXEDFILEINFO);
+        Some((fi.dwFileVersionMS >> 16, fi.dwFileVersionMS & 0xFFFF, fi.dwFileVersionLS >> 16))
+    }
 }
 
 /// Can we put FnCheatsheet.exe.new next to the running exe?
@@ -347,6 +380,12 @@ mod tests {
         assert!(parse_version("v1.2.3-beta").is_none());
         assert!(parse_version("1.2.3.4").is_none());
         assert!(parse_version("v0.10.0") > parse_version("v0.9.9"));
+    }
+
+    #[test]
+    fn own_version_resource() {
+        // The test binary has no version resource; the real exe is checked in CI via --selftest builds.
+        assert!(file_version(std::path::Path::new(r"C:\definitely-missing.exe")).is_none());
     }
 
     #[test]

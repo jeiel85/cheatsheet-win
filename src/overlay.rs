@@ -36,11 +36,11 @@ pub struct Palette {
 }
 
 pub const DARK: Palette = Palette {
-    panel: 0xF21C1D22, panel_border: 0xFF3A3C44, text: 0xFFF3F4F6, sub: 0xFFA3A8B3, cap: 0xFF2A2C33, cap_border: 0xFF41444D,
+    panel: 0xFF1C1D22, panel_border: 0xFF3A3C44, text: 0xFFF3F4F6, sub: 0xFFA3A8B3, cap: 0xFF2A2C33, cap_border: 0xFF41444D,
     cap_text: 0xFFC9CDD6, accent: 0xFF5CC8FF, accent_text: 0xFF0B1220, chip: 0xFF33363E, warn: 0xFFFFC857,
 };
 pub const LIGHT: Palette = Palette {
-    panel: 0xF8F8F9FB, panel_border: 0xFFD6D9E0, text: 0xFF17181C, sub: 0xFF5B606B, cap: 0xFFFFFFFF, cap_border: 0xFFCDD1D9,
+    panel: 0xFFF8F9FB, panel_border: 0xFFD6D9E0, text: 0xFF17181C, sub: 0xFF5B606B, cap: 0xFFFFFFFF, cap_border: 0xFFCDD1D9,
     cap_text: 0xFF3A3E47, accent: 0xFF0067C0, accent_text: 0xFFFFFFFF, chip: 0xFFE9ECF1, warn: 0xFF9A5B00,
 };
 
@@ -461,6 +461,9 @@ impl Overlay {
         if let Err(e) = self.show_inner(m, pal, user_scale, pinned) {
             crate::util::log(&format!("overlay show failed: {e}"));
         }
+        // The layered window keeps its own copy of the pixels; drop the factories and their caches so the
+        // tray app goes back to its idle footprint. Recreating them on the next hold takes a few ms.
+        shutdown();
     }
 
     fn show_inner(&mut self, m: &OverlayModel, pal: &Palette, user_scale: f32, pinned: bool) -> Result<()> {
@@ -508,8 +511,10 @@ impl Overlay {
             let old = SelectObject(mem, dib.into());
 
             let result = with_gfx(|g| {
+                // Software rasterizer: drawing one small sheet doesn't justify loading the GPU driver stack
+                // (tens of MB that would stay resident in a tray app).
                 let props = D2D1_RENDER_TARGET_PROPERTIES {
-                    r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                    r#type: D2D1_RENDER_TARGET_TYPE_SOFTWARE,
                     pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
                     dpiX: 96.0 * scale,
                     dpiY: 96.0 * scale,
