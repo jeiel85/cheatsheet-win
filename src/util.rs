@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use windows::core::{PCWSTR, PWSTR};
+use windows::core::PCWSTR;
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::UI::Shell::{FOLDERID_LocalAppData, FOLDERID_RoamingAppData, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
 
@@ -22,9 +22,6 @@ impl WStr {
     }
     pub fn pcwstr(&self) -> PCWSTR {
         PCWSTR(self.0.as_ptr())
-    }
-    pub fn pwstr(&mut self) -> PWSTR {
-        PWSTR(self.0.as_mut_ptr())
     }
     /// Without the terminating NUL.
     pub fn units(&self) -> &[u16] {

@@ -131,8 +131,11 @@ fn main() {
                 }
             } else {
                 if !background {
-                    if let Ok(h) = FindWindowW(app::MAIN_CLASS, None) {
-                        let _ = PostMessageW(Some(h), app::WM_APP_OPEN_SETTINGS, WPARAM(0), LPARAM(0));
+                    match FindWindowW(app::MAIN_CLASS, None) {
+                        Ok(h) => {
+                            let _ = PostMessageW(Some(h), app::WM_APP_OPEN_SETTINGS, WPARAM(0), LPARAM(0));
+                        }
+                        Err(e) => util::log(&format!("second instance: main window not found: {e}")),
                     }
                 }
                 let _ = CloseHandle(mutex);

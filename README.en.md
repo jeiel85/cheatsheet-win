@@ -42,6 +42,11 @@ The Mac has CheatSheet (hold <kbd>⌘</kbd> to see shortcuts). Windows laptops h
 | 🪶 | **Featherweight** | A single ~2 MB exe written in Rust on plain Win32. No runtime to install; a few MB of memory while it waits in the tray. |
 | 🔄 | **Auto-update** | Checks GitHub releases once a day; a new version is verified (SHA-256) and swapped in with a restart. Can be turned off. |
 
+<p align="center">
+  <img src="docs/assets/screens/settings-device-dark.png" alt="Settings — Device (dark)" width="49%" />
+  <img src="docs/assets/screens/settings-trigger-light.png" alt="Settings — Trigger & display (light)" width="49%" />
+</p>
+
 ## 🤷 Why Ctrl and not Fn?
 
 On almost every ASUS and Lenovo laptop the Fn key is **handled inside the keyboard controller (EC)**.
@@ -228,6 +233,11 @@ Keys can differ by year or SKU even within a series. Please open an issue with t
 <details><summary><b>Do F1–F12 need Fn or not?</b></summary>
 
 That depends on **Fn Lock**. The bottom of the sheet shows your model's lock combo (usually <kbd>Fn</kbd>+<kbd>Esc</kbd>) and its factory default.
+</details>
+
+<details><summary><b>Holding Fn does nothing.</b></summary>
+
+That's expected: most laptops handle Fn inside the keyboard and send Windows nothing. Hold **Left Ctrl**, right next to Fn. Over **Remote Desktop**, Fn is handled by the keyboard in front of you and never reaches the remote PC (Ctrl does).
 </details>
 
 <details><summary><b>It doesn't show over some windows.</b></summary>
