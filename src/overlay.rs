@@ -28,6 +28,8 @@ pub struct OverlayModel<'a> {
     pub status: String,
     pub device_label: String,
     pub ambiguous: bool,
+    /// Read each key's current state (fan mode…) from this PC. Off for the docs screenshots.
+    pub live_state: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -328,6 +330,17 @@ fn build(g: &Gfx, m: &OverlayModel, pal: &Palette) -> Result<Scene> {
             let lw = lt.w;
             parts.push(Op::Text { x: x + 8.0, y: 2.0, t: lt, color: pal.text });
             x += 8.0 + lw;
+            // What the key has switched on right now, e.g. "Now: Whisper".
+            let now = if m.live_state { k.state.as_ref().and_then(crate::state::current) } else { None };
+            if let Some(v) = now {
+                let st = text(g, &format!("{}{}", t("Now: ", "현재 "), v.label()), 11.5, true, UI_FONT, 300.0, Align::Left, false)?;
+                let sw = st.w + 14.0;
+                let sx = x + 10.0;
+                parts.push(Op::Rect { x: sx, y: 2.0, w: sw, h: 20.0, r: 10.0, fill: pal.accent, stroke: None });
+                let sth = st.h;
+                parts.push(Op::Text { x: sx + 7.0, y: 2.0 + (20.0 - sth) / 2.0, t: st, color: pal.accent_text });
+                x = sx + sw;
+            }
             items.push(Item { parts, w: x });
         }
         let cols = if items.len() > 8 { 3 } else { 2 };

@@ -21,6 +21,7 @@ mod overlay;
 mod selftest;
 mod settings;
 mod startup;
+mod state;
 mod trigger;
 mod ui;
 mod update;
@@ -92,11 +93,19 @@ covers monitor: {}", fullscreen::covers_monitor(&s))),
             let r = matcher::match_device(&dev, &db.profiles);
             let c: Vec<String> = r.candidates.iter().map(|c| format!("{} ({}, {})", db.profiles[c.index].id, c.score, c.reason)).collect();
             lines.push(format!("Match: {:?} -> {}", r.kind, c.join(", ")));
+            if let Some(p) = r.best().map(|i| &db.profiles[i]) {
+                for k in &p.keys {
+                    if let Some(s) = &k.state {
+                        let now = state::current(s).map(|v| v.en.as_str()).unwrap_or("unreadable");
+                        lines.push(format!("State {}: {} = {now}", k.key, s.value));
+                    }
+                }
+            }
             0
         }
         _ => {
             if args.len() < 3 {
-                lines.push("usage: --render <profile-id|unknown> <out.png> [ko|en] [dark|light]".into());
+                lines.push("usage: --render <profile-id|unknown> <out.png> [ko|en] [dark|light] [live]".into());
                 2
             } else {
                 unsafe {
@@ -115,6 +124,8 @@ covers monitor: {}", fullscreen::covers_monitor(&s))),
                         status: if profile.is_some() { format!("{} · {}", i18n::t("Detected automatically", "자동 감지됨"), i18n::t("model code", "모델 코드")) } else { String::new() },
                         device_label: "Example Corp · Example Laptop 14".into(),
                         ambiguous: false,
+                        // Docs screenshots must not depend on this PC; "live" shows its current key states.
+                        live_state: args.get(5).map(String::as_str) == Some("live"),
                     };
                     match overlay::render_png(&m, &pal, &args[2], 2.0) {
                         Ok(()) => {

@@ -36,6 +36,33 @@ pub struct KeyHint {
     pub ko: String,
     pub note_en: String,
     pub note_ko: String,
+    /// Where to read what this key currently has switched on (e.g. the fan mode), if anywhere.
+    pub state: Option<KeyState>,
+}
+
+/// A registry DWORD that the maker's own software keeps in step with the key, and what each value means.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct KeyState {
+    /// "HKLM\…" or "HKCU\…" (the long HKEY_… names work too).
+    pub registry: String,
+    /// DWORD value name under `registry`.
+    pub value: String,
+    pub values: Vec<StateValue>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct StateValue {
+    pub is: u32,
+    pub en: String,
+    pub ko: String,
+}
+
+impl StateValue {
+    pub fn label(&self) -> &str {
+        pick(&self.en, &self.ko)
+    }
 }
 
 impl KeyHint {
