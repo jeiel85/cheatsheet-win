@@ -48,7 +48,10 @@ A wrong key is worse than a missing model, so if something differs by year or SK
 - Labels are short (they go on a key cap): "Volume up", "볼륨 높이기". Put qualifiers ("selected models only",
   "customizable in MyASUS") in `note_en` / `note_ko` — always both languages. Research provenance ("legend printed on
   the key in the guide's illustration") goes in `evidence_en` / `evidence_ko`, which the overlay doesn't show.
-- `state` (optional, on a key that cycles a mode) — where the overlay reads what is on right now, shown as a
+- Standard states need nothing in the profile: keys with the icons `mute`, `mic-mute`, `airplane`, `vol-up`/`vol-down`,
+  `bright-up`/`bright-down` and `display` get their badge from Windows automatically, so pick those icons only for keys
+  that really do that.
+- `state` (optional, on a key that cycles a maker-specific mode) — where the overlay reads what is on right now, shown as a
   "Now: …" badge. It must be a registry DWORD that the maker's own software keeps in step with the key, readable
   without admin rights, and mapped on a real machine (cite the test in `evidence_*`). Unknown values or a missing key
   show nothing.

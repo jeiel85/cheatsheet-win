@@ -93,11 +93,18 @@ covers monitor: {}", fullscreen::covers_monitor(&s))),
             let r = matcher::match_device(&dev, &db.profiles);
             let c: Vec<String> = r.candidates.iter().map(|c| format!("{} ({}, {})", db.profiles[c.index].id, c.score, c.reason)).collect();
             lines.push(format!("Match: {:?} -> {}", r.kind, c.join(", ")));
+            unsafe {
+                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            }
+            let sys = state::System::read();
+            lines.push(format!("System state: {sys:?}"));
             if let Some(p) = r.best().map(|i| &db.profiles[i]) {
                 for k in &p.keys {
                     if let Some(s) = &k.state {
                         let now = state::current(s).map(|v| v.en.as_str()).unwrap_or("unreadable");
                         lines.push(format!("State {}: {} = {now}", k.key, s.value));
+                    } else if let Some(b) = state::standard_badge(&k.icon, &sys) {
+                        lines.push(format!("State {} ({}): {}", k.key, k.icon, b.text));
                     }
                 }
             }
@@ -125,7 +132,7 @@ covers monitor: {}", fullscreen::covers_monitor(&s))),
                         device_label: "Example Corp · Example Laptop 14".into(),
                         ambiguous: false,
                         // Docs screenshots must not depend on this PC; "live" shows its current key states.
-                        live_state: args.get(5).map(String::as_str) == Some("live"),
+                        live: (args.get(5).map(String::as_str) == Some("live")).then(state::System::read),
                     };
                     match overlay::render_png(&m, &pal, &args[2], 2.0) {
                         Ok(()) => {
