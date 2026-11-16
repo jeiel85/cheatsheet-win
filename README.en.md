@@ -36,6 +36,7 @@ The Mac has CheatSheet (hold <kbd>⌘</kbd> to see shortcuts). Windows laptops h
 | 🔍 | **Detects your model** | Uses the maker and model code Windows already knows (ASUS `P1503CVA`, Lenovo machine type `21HM`, …) to pick the matching keyboard profile. |
 | 🙅 | **Never guesses** | Unknown model, or several candidates? You get "pick your model" instead of a wrong map. A matching manufacturer alone never selects a profile. |
 | ⌨️ | **Hold or double-tap** | Hold <kbd>Left Ctrl</kbd> alone for 0.9 s, or tap it twice quickly (your choice in Settings). Any other key, click or scroll cancels it, so <kbd>Ctrl</kbd>+<kbd>C</kbd> and <kbd>Ctrl</kbd>+click behave as always. |
+| 🌀 | **Shows the current mode** | Keys that cycle a mode also show what's on right now — e.g. **Now: Whisper** next to <kbd>Fn</kbd>+<kbd>F</kbd> on the ASUS ExpertBook P1 15". It only reads a value the maker's own software keeps, and only on models where that was confirmed. |
 | 📖 | **From official manuals** | Every key comes from the maker's own documentation (ASUS E-Manual, Lenovo User Guide…). Settings → About links the sources. |
 | 🧩 | **Pick or add your own** | Choose a model in Settings, or drop JSON profiles into `%APPDATA%\FnCheatsheet\profiles\`. |
 | 🌗 | **Korean/English, dark/light** | Follows the Windows language and theme, and appears centered on the screen you're working on — multi-monitor and high-DPI aware. |
@@ -242,6 +243,7 @@ Not listed? **Settings → Device → Request this model** opens an issue with y
 - **Never elevated** (`asInvoker`). No service, driver or scheduled task.
 - The keyboard hook **only checks whether the trigger key is held alone** and never stores what you type. It doesn't block or change any input.
 - Device detection reads **model strings only** — no serial numbers or UUIDs.
+- The "current mode" badge **reads** one registry value named by the profile when the sheet opens (e.g. the ASUS fan mode). It changes nothing and reads nothing while the sheet is hidden.
 
 Details in [SECURITY.md](SECURITY.md).
 
@@ -288,7 +290,7 @@ Needs [Rust](https://rustup.rs) (MSVC toolchain) and Visual Studio Build Tools (
 
 ```powershell
 .\build.ps1 -Version 0.1.0     # cargo test + dist\FnCheatsheet.exe + profile self-test
-.\dist\FnCheatsheet.exe --device                                   # this PC's model strings and match result
+.\dist\FnCheatsheet.exe --device                                   # this PC's model strings, match result and current key states
 .\dist\FnCheatsheet.exe --render <profile-id> out.png en dark      # render the overlay to PNG
 ```
 

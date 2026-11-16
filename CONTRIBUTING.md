@@ -48,6 +48,15 @@ A wrong key is worse than a missing model, so if something differs by year or SK
 - Labels are short (they go on a key cap): "Volume up", "볼륨 높이기". Put qualifiers ("selected models only",
   "customizable in MyASUS") in `note_en` / `note_ko` — always both languages. Research provenance ("legend printed on
   the key in the guide's illustration") goes in `evidence_en` / `evidence_ko`, which the overlay doesn't show.
+- `state` (optional, on a key that cycles a mode) — where the overlay reads what is on right now, shown as a
+  "Now: …" badge. It must be a registry DWORD that the maker's own software keeps in step with the key, readable
+  without admin rights, and mapped on a real machine (cite the test in `evidence_*`). Unknown values or a missing key
+  show nothing.
+  ```jsonc
+  "state": { "registry": "HKLM\\SOFTWARE\\…", "value": "QuietFan",
+             "values": [ { "is": 0, "en": "Standard", "ko": "표준" }, { "is": 1, "en": "Whisper", "ko": "저소음" } ] }
+  ```
+  `FnCheatsheet.exe --device` prints the value it reads on this PC.
 - `verified`: `official-manual` / `official-web` when every key is backed by the source, `partial` otherwise (the overlay
   then shows a "partly verified" warning).
 - Patterns are [Rust `regex`](https://docs.rs/regex) syntax, case-insensitive: no look-around or backreferences.
