@@ -50,7 +50,8 @@ A wrong key is worse than a missing model, so if something differs by year or SK
   the key in the guide's illustration") goes in `evidence_en` / `evidence_ko`, which the overlay doesn't show.
 - Standard states need nothing in the profile: keys with the icons `mute`, `mic-mute`, `airplane`, `vol-up`/`vol-down`,
   `bright-up`/`bright-down` and `display` get their badge from Windows automatically, so pick those icons only for keys
-  that really do that.
+  that really do that. A key that shares the icon but does something else (Zenbook Duo F8 "swap windows between
+  screens" uses `display`) adds `"noState": true`; a unit test lists the labels allowed per icon.
 - `state` (optional, on a key that cycles a maker-specific mode) — where the overlay reads what is on right now, shown as a
   "Now: …" badge. It must be a registry DWORD that the maker's own software keeps in step with the key, readable
   without admin rights, and mapped on a real machine (cite the test in `evidence_*`). Unknown values or a missing key

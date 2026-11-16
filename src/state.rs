@@ -195,6 +195,9 @@ pub fn badge(k: &KeyHint, sys: &System) -> Option<Badge> {
     if let Some(s) = &k.state {
         return current(s).map(|v| Badge { text: v.label().to_string(), on: true, mode: true });
     }
+    if k.no_state {
+        return None;
+    }
     standard_badge(&k.icon, sys)
 }
 
@@ -275,6 +278,40 @@ mod tests {
         assert!(standard_badge("airplane", &sys).is_none(), "unreadable state shows nothing");
         assert!(standard_badge("calculator", &sys).is_none());
         assert!(standard_badge("display", &System::default()).is_none(), "one screen: no display badge");
+    }
+
+    /// A standard badge is picked by icon alone, so every key with such an icon must really do that action —
+    /// or say `noState`. New labels go in this list only after checking they mean the same thing.
+    #[test]
+    fn standard_icons_only_on_matching_keys() {
+        let expected: &[(&str, &[&str])] = &[
+            ("mute", &["Mute"]),
+            ("mic-mute", &["Mic mute"]),
+            ("airplane", &["Airplane mode"]),
+            ("vol-up", &["Volume up"]),
+            ("vol-down", &["Volume down"]),
+            ("bright-up", &["Brightness up"]),
+            ("bright-down", &["Brightness down"]),
+            // ThinkPad F7 "External displays" switches the display output (Win+P), same as "Display mode".
+            ("display", &["Display mode", "External displays"]),
+        ];
+        let db = ProfileDb::load(None);
+        for p in &db.profiles {
+            for k in p.keys.iter().filter(|k| !k.no_state && k.state.is_none()) {
+                if let Some((_, labels)) = expected.iter().find(|(icon, _)| *icon == k.icon) {
+                    assert!(labels.contains(&k.en.as_str()), "{} / {}: icon {} on \"{}\" would show a wrong badge; add \"noState\": true", p.id, k.key, k.icon, k.en);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_state_suppresses_the_standard_badge() {
+        let sys = System { display: Some(DisplayMode::Extend), ..Default::default() };
+        let mut k = KeyHint { icon: "display".into(), ..Default::default() };
+        assert!(badge(&k, &sys).is_some());
+        k.no_state = true;
+        assert!(badge(&k, &sys).is_none());
     }
 
     #[test]

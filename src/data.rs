@@ -38,6 +38,10 @@ pub struct KeyHint {
     pub note_ko: String,
     /// Where to read what this key currently has switched on (e.g. the fan mode), if anywhere.
     pub state: Option<KeyState>,
+    /// The icon is shared with a standard state (e.g. `display`) but this key does something else
+    /// (Zenbook Duo "swap windows between screens"), so it gets no standard badge.
+    #[serde(rename = "noState")]
+    pub no_state: bool,
 }
 
 /// A registry DWORD that the maker's own software keeps in step with the key, and what each value means.
