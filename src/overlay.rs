@@ -28,8 +28,9 @@ pub struct OverlayModel<'a> {
     pub status: String,
     pub device_label: String,
     pub ambiguous: bool,
-    /// Read each key's current state (fan mode…) from this PC. Off for the docs screenshots.
-    pub live_state: bool,
+    /// This PC's current key states (mute, brightness, fan mode…), read when the sheet opens. None for the docs
+    /// screenshots, which must not depend on the PC that renders them.
+    pub live: Option<crate::state::System>,
 }
 
 #[derive(Clone, Copy)]
@@ -173,6 +174,26 @@ pub(crate) fn text(g: &Gfx, s: &str, size: f32, bold: bool, font: &str, max_w: f
 
 // ───────────────────────── layout ─────────────────────────
 
+/// Extra cap height for the state badge under the label, when any top-row key has one.
+const CAP_BADGE_H: f32 = 22.0;
+
+fn badge_for(m: &OverlayModel, k: &KeyHint) -> Option<crate::state::Badge> {
+    m.live.as_ref().and_then(|sys| crate::state::badge(k, sys))
+}
+
+/// Highlighted when something is on (or for a named mode); a quiet chip for plain values and "Off".
+fn pill(x: f32, y: f32, w: f32, h: f32, b: &crate::state::Badge, pal: &Palette) -> Op {
+    if b.on {
+        Op::Rect { x, y, w, h, r: h / 2.0, fill: pal.accent, stroke: None }
+    } else {
+        Op::Rect { x, y, w, h, r: h / 2.0, fill: pal.chip, stroke: Some(pal.cap_border) }
+    }
+}
+
+fn pill_text(b: &crate::state::Badge, pal: &Palette) -> u32 {
+    if b.on { pal.accent_text } else { pal.text }
+}
+
 enum Op {
     Rect { x: f32, y: f32, w: f32, h: f32, r: f32, fill: u32, stroke: Option<u32> },
     Text { t: Text, x: f32, y: f32, color: u32 },
@@ -267,10 +288,25 @@ fn build(g: &Gfx, m: &OverlayModel, pal: &Palette) -> Result<Scene> {
         y += h + 6.0;
         let per_row = top.len().min(CAPS_PER_ROW);
         content_w = content_w.max(per_row as f32 * (CAP_W + CAP_GAP) - CAP_GAP);
+        let badges: Vec<Option<crate::state::Badge>> = top.iter().map(|k| badge_for(m, k)).collect();
+        // A row grows only if one of its keys has a badge.
+        let rows = top.len().div_ceil(CAPS_PER_ROW);
+        let row_h: Vec<f32> = (0..rows)
+            .map(|r| if badges.iter().skip(r * CAPS_PER_ROW).take(CAPS_PER_ROW).any(Option::is_some) { CAP_H + CAP_BADGE_H } else { CAP_H })
+            .collect();
+        let row_y: Vec<f32> = row_h.iter().scan(y, |acc, h| { let at = *acc; *acc += h + CAP_GAP; Some(at) }).collect();
         for (i, k) in top.iter().enumerate() {
             let cx = x0 + (i % CAPS_PER_ROW) as f32 * (CAP_W + CAP_GAP);
-            let cy = y + (i / CAPS_PER_ROW) as f32 * (CAP_H + CAP_GAP);
-            ops.push(Op::Rect { x: cx, y: cy, w: CAP_W, h: CAP_H, r: 8.0, fill: pal.cap, stroke: Some(pal.cap_border) });
+            let (cy, cap_h) = (row_y[i / CAPS_PER_ROW], row_h[i / CAPS_PER_ROW]);
+            ops.push(Op::Rect { x: cx, y: cy, w: CAP_W, h: cap_h, r: 8.0, fill: pal.cap, stroke: Some(pal.cap_border) });
+            if let Some(b) = &badges[i] {
+                let bt = text(g, &b.text, 10.0, true, UI_FONT, CAP_W - 16.0, Align::Left, false)?;
+                let bw = (bt.w + 12.0).min(CAP_W - 8.0);
+                let (bx, by, bh) = (cx + (CAP_W - bw) / 2.0, cy + cap_h - 24.0, 18.0);
+                ops.push(pill(bx, by, bw, bh, b, pal));
+                let (btw, bth) = (bt.w, bt.h);
+                ops.push(Op::Text { x: bx + (bw - btw) / 2.0, y: by + (bh - bth) / 2.0, t: bt, color: pill_text(b, pal) });
+            }
             let key = text(g, &format!("{}{}", k.key, mark(k, &mut notes)), 10.5, true, UI_FONT, CAP_W - 12.0, Align::Left, false)?;
             ops.push(Op::Text { x: cx + 6.0, y: cy + 4.0, t: key, color: pal.cap_text });
             if let Some(gl) = glyphs::glyph(&k.icon) {
@@ -290,8 +326,7 @@ fn build(g: &Gfx, m: &OverlayModel, pal: &Palette) -> Result<Scene> {
             let lt = text(g, label, size, false, UI_FONT, CAP_W - 8.0, Align::Center, true)?;
             ops.push(Op::Text { x: cx + 4.0, y: cy + 50.0, t: lt, color: pal.text });
         }
-        let rows = top.len().div_ceil(CAPS_PER_ROW);
-        y += rows as f32 * (CAP_H + CAP_GAP) + 10.0;
+        y += row_h.iter().map(|h| h + CAP_GAP).sum::<f32>() + 10.0;
     }
 
     // Fn + key combos
@@ -330,15 +365,15 @@ fn build(g: &Gfx, m: &OverlayModel, pal: &Palette) -> Result<Scene> {
             let lw = lt.w;
             parts.push(Op::Text { x: x + 8.0, y: 2.0, t: lt, color: pal.text });
             x += 8.0 + lw;
-            // What the key has switched on right now, e.g. "Now: Whisper".
-            let now = if m.live_state { k.state.as_ref().and_then(crate::state::current) } else { None };
-            if let Some(v) = now {
-                let st = text(g, &format!("{}{}", t("Now: ", "현재 "), v.label()), 11.5, true, UI_FONT, 300.0, Align::Left, false)?;
+            // What the key has switched on right now, e.g. "Now: Whisper" or "On".
+            if let Some(b) = badge_for(m, k) {
+                let s = if b.mode { format!("{}{}", t("Now: ", "현재 "), b.text) } else { b.text.clone() };
+                let st = text(g, &s, 11.5, true, UI_FONT, 300.0, Align::Left, false)?;
                 let sw = st.w + 14.0;
                 let sx = x + 10.0;
-                parts.push(Op::Rect { x: sx, y: 2.0, w: sw, h: 20.0, r: 10.0, fill: pal.accent, stroke: None });
+                parts.push(pill(sx, 2.0, sw, 20.0, &b, pal));
                 let sth = st.h;
-                parts.push(Op::Text { x: sx + 7.0, y: 2.0 + (20.0 - sth) / 2.0, t: st, color: pal.accent_text });
+                parts.push(Op::Text { x: sx + 7.0, y: 2.0 + (20.0 - sth) / 2.0, t: st, color: pill_text(&b, pal) });
                 x = sx + sw;
             }
             items.push(Item { parts, w: x });

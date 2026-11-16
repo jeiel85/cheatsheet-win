@@ -132,7 +132,7 @@ pub fn show_overlay(pinned: bool) {
     if !pinned && skip_fs && crate::fullscreen::app_in_front() {
         return;
     }
-    let model = OverlayModel { profile: profile.as_ref(), status, device_label: label, ambiguous, live_state: true };
+    let model = OverlayModel { profile: profile.as_ref(), status, device_label: label, ambiguous, live: Some(crate::state::System::read()) };
     let pal = palette_for(&theme);
     OVERLAY.with(|o| {
         if let Ok(mut o) = o.try_borrow_mut() {
